@@ -1,9 +1,9 @@
 using Avalonia.Controls;
 using Avalonia.Platform;
 using Avalonia.Threading;
-using YtDlpWrapper.ViewModels;
+using Inanna.ViewModels;
 
-namespace YtDlpWrapper.Views;
+namespace Inanna.Views;
 
 public partial class MainWindow : Window
 {

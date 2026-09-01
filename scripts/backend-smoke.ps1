@@ -3,7 +3,7 @@ param(
     [string]$BackendPath
 )
 
-$dataRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("yt-dlp-wrapper-smoke-" + [guid]::NewGuid())
+$dataRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("inanna-smoke-" + [guid]::NewGuid())
 $info = [System.Diagnostics.ProcessStartInfo]::new((Resolve-Path $BackendPath).Path)
 $info.UseShellExecute = $false
 $info.RedirectStandardInput = $true

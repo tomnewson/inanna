@@ -2,8 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
+    <!-- Stable executable identity retained so existing Velopack installs update in place. -->
     <AssemblyName>yt-dlp-wrapper</AssemblyName>
-    <RootNamespace>YtDlpWrapper</RootNamespace>
+    <RootNamespace>Inanna</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>

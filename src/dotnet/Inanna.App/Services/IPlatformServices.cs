@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public interface IPlatformServices
 {

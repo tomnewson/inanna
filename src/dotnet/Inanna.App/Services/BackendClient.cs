@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public sealed class BackendClient(IPlatformServices platform) : IBackendClient
 {

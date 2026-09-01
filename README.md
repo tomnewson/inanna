@@ -1,6 +1,6 @@
-# YT-DLP Wrapper
+# Inanna
 ## Install
-For normal use: [Download Latest Release](https://github.com/tomnewson/yt-dlp-wrapper/releases) 
+For normal use: [Download Latest Release](https://github.com/tomnewson/yt-dlp-wrapper/releases)
 
 For development: See build instructions below.
 
@@ -42,6 +42,8 @@ The sidecar protocol is private to matching application releases. Standard outpu
 
 Installed builds check this repository's GitHub Releases at startup. When an application update is available, the interface can download it and restart into the new version. Release packages are produced with Velopack; delta packages are used when a compatible previous release is available. Development and portable builds do not attempt to update themselves.
 
+Inanna retains the original Velopack package IDs, executable name, macOS bundle identifier, and update endpoint as stable technical identifiers. This lets existing installations update in place while the visible application and installer names use Inanna. On its first normal launch, Inanna copies persistent settings and managed tools from the legacy application-data directory into the new `Inanna` directory. The legacy directory is left untouched; if a file is locked, that launch keeps using the legacy directory and retries the copy next time.
+
 Application code and managed tools have separate update lifecycles. Replacing the application does not replace the managed tools or settings.
 
 The backend checks these official release sources at startup:
@@ -55,9 +57,9 @@ The backend checks these official release sources at startup:
 Install the stable Rust toolchain and .NET 10 SDK. Windows builds additionally need the MSVC build tools. Restore and test both parts:
 
 ```powershell
-dotnet restore YtDlpWrapper.slnx
+dotnet restore Inanna.slnx
 cargo test --all-targets --locked
-dotnet test YtDlpWrapper.slnx --no-restore -m:1 --disable-build-servers
+dotnet test Inanna.slnx --no-restore -m:1 --disable-build-servers
 ```
 
 Build both development executables, place the Rust sidecar beside the frontend, and start the app:
@@ -76,20 +78,20 @@ Build the Windows backend and publish the self-contained Avalonia frontend:
 
 ```powershell
 $buildVersion = (git describe --tags --abbrev=0 --match "v[0-9]*").Substring(1)
-$env:YT_DLP_WRAPPER_VERSION = $buildVersion
+$env:INANNA_VERSION = $buildVersion
 cargo build --release --target x86_64-pc-windows-msvc --locked
-dotnet publish src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj `
+dotnet publish src/dotnet/Inanna.App/Inanna.App.csproj `
   --configuration Release --runtime win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:PublishTrimmed=false --output dist/yt-dlp-wrapper
-Copy-Item target/x86_64-pc-windows-msvc/release/yt-dlp-wrapper-backend.exe dist/yt-dlp-wrapper/
+  -p:PublishTrimmed=false --output dist/inanna
+Copy-Item target/x86_64-pc-windows-msvc/release/inanna-backend.exe dist/inanna/
 ```
 
 Build an ad-hoc-signed, self-contained macOS arm64 app bundle and portable ZIP on an Apple Silicon Mac. The full Xcode 26 toolchain must be active so the layered Icon Composer source can be compiled into the bundle:
 
 ```bash
 ./scripts/build-macos-arm64.sh
-open 'dist/macos-arm64/YT-DLP Wrapper.app'
+open 'dist/macos-arm64/Inanna.app'
 ```
 
 ## Privacy and security

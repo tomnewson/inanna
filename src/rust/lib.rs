@@ -7,7 +7,7 @@ pub mod protocol;
 pub mod tools;
 
 pub fn application_version() -> &'static str {
-    option_env!("YT_DLP_WRAPPER_VERSION")
+    option_env!("INANNA_VERSION")
         .filter(|version| !version.is_empty())
         .unwrap_or(env!("CARGO_PKG_VERSION"))
 }

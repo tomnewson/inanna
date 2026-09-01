@@ -1,10 +1,12 @@
 using Velopack;
 using Velopack.Sources;
 
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public static class ApplicationUpdater
 {
+    // Keep the original endpoint so released builds continue to find the same feed.
+    // GitHub redirects it if the repository itself is renamed later.
     private const string RepositoryUrl = "https://github.com/tomnewson/yt-dlp-wrapper";
     private const string UpdateCheckTimestampFile = "last-application-update-check.txt";
 

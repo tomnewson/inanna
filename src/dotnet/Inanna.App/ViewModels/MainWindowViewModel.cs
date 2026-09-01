@@ -2,9 +2,9 @@ using System.Text.Json;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using YtDlpWrapper.Services;
+using Inanna.Services;
 
-namespace YtDlpWrapper.ViewModels;
+namespace Inanna.ViewModels;
 
 public partial class MainWindowViewModel : ObservableObject
 {
@@ -153,7 +153,8 @@ public partial class MainWindowViewModel : ObservableObject
     public bool ShowDetailsButton => !string.IsNullOrWhiteSpace(DetailsText);
     public bool IsProgressIndeterminate => Busy && Progress <= 0;
     public bool HasCompletedFile => Completed && !string.IsNullOrWhiteSpace(CompletedPath);
-    public bool ShowStatusText => !HasCompletedFile && StatusText != "Ready.";
+    public bool ShowStatusText =>
+        !HasCompletedFile && !string.IsNullOrWhiteSpace(StatusText) && StatusText != "Ready.";
     public string DetailsButtonText => ShowDetails ? "Hide details" : "Details";
     public bool ShowRestartButton => EngineUnavailable && !Busy;
     public bool ShowApplicationUpdatePanel => ApplicationUpdateAvailable;
@@ -442,7 +443,7 @@ public partial class MainWindowViewModel : ObservableObject
                 SetupRequired = false;
                 UpdateAvailable = false;
                 CanInstallTools = false;
-                StatusText = "Tools installed. Ready to download.";
+                StatusText = string.Empty;
                 break;
             case "operationCompleted" when operationKind == "download":
                 FinishOperation();

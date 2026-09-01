@@ -1,4 +1,4 @@
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public sealed record ApplicationUpdate(string Version, object NativeUpdate);
 

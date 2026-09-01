@@ -2,11 +2,11 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using YtDlpWrapper.Services;
-using YtDlpWrapper.ViewModels;
-using YtDlpWrapper.Views;
+using Inanna.Services;
+using Inanna.ViewModels;
+using Inanna.Views;
 
-namespace YtDlpWrapper;
+namespace Inanna;
 
 public partial class App : Application
 {

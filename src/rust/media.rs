@@ -150,7 +150,7 @@ pub async fn download_media(
     fs::create_dir_all(&request.output_directory).await?;
     let staging = request
         .output_directory
-        .join(format!(".yt-dlp-wrapper-{}", Uuid::new_v4()));
+        .join(format!(".inanna-{}", Uuid::new_v4()));
     fs::create_dir_all(&staging).await?;
 
     let result = run_pipeline(&tools, &request, &staging, &cancel, &progress).await;

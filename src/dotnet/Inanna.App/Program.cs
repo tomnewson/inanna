@@ -1,7 +1,7 @@
 using Avalonia;
 using Velopack;
 
-namespace YtDlpWrapper;
+namespace Inanna;
 
 internal static class Program
 {

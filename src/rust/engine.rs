@@ -178,11 +178,10 @@ impl AppEngine {
                         can_install_tools: true,
                         update_summary: summary,
                         status_text: if first_setup {
-                            "Install the required tools to continue."
+                            String::new()
                         } else {
-                            "Updates are available."
-                        }
-                        .into(),
+                            "Updates are available.".into()
+                        },
                     })
                 }
                 Ok(_) => {
@@ -272,14 +271,9 @@ impl AppEngine {
 
     pub fn validate_download(
         &self,
-        parameters: DownloadParameters,
+        mut parameters: DownloadParameters,
     ) -> Result<DownloadParameters, BackendError> {
-        let valid_url = url::Url::parse(&parameters.url)
-            .map(|url| matches!(url.scheme(), "http" | "https"))
-            .unwrap_or(false);
-        if !valid_url {
-            return Err(BackendError::InvalidUrl);
-        }
+        parameters.url = normalize_download_url(&parameters.url)?;
         if parameters.output_directory.as_os_str().is_empty() {
             return Err(BackendError::InvalidRequest(
                 "the output folder cannot be empty".into(),
@@ -402,6 +396,23 @@ impl AppEngine {
     }
 }
 
+fn normalize_download_url(value: &str) -> Result<String, BackendError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(BackendError::InvalidUrl);
+    }
+
+    let candidate = if value.contains("://") {
+        value.to_owned()
+    } else {
+        format!("https://{value}")
+    };
+    let valid = url::Url::parse(&candidate)
+        .map(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
+        .unwrap_or(false);
+    valid.then_some(candidate).ok_or(BackendError::InvalidUrl)
+}
+
 fn emit(events: &EventSink, operation_id: &str, event: &str, data: Value) {
     events(EngineEvent {
         operation_id: operation_id.into(),
@@ -508,5 +519,32 @@ impl BackendError {
             message,
             details,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_download_url;
+
+    #[test]
+    fn adds_https_to_scheme_less_url() {
+        assert_eq!(
+            normalize_download_url("youtu.be/dLpDMOboh0o").unwrap(),
+            "https://youtu.be/dLpDMOboh0o"
+        );
+    }
+
+    #[test]
+    fn preserves_supported_scheme_and_trims_whitespace() {
+        assert_eq!(
+            normalize_download_url("  http://example.com/video  ").unwrap(),
+            "http://example.com/video"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_or_malformed_url() {
+        assert!(normalize_download_url("ftp://example.com/video").is_err());
+        assert!(normalize_download_url("not a url").is_err());
     }
 }

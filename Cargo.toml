@@ -1,12 +1,12 @@
 [package]
-name = "yt-dlp-wrapper"
+name = "inanna"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
-description = "Rust sidecar for the yt-dlp-wrapper desktop application"
+description = "Rust sidecar for the Inanna desktop application"
 
 [[bin]]
-name = "yt-dlp-wrapper-backend"
+name = "inanna-backend"
 path = "src/rust/backend_main.rs"
 
 [lib]

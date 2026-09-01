@@ -1,10 +1,10 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:viewModels="using:YtDlpWrapper.ViewModels"
-        x:Class="YtDlpWrapper.Views.MainWindow"
+        xmlns:viewModels="using:Inanna.ViewModels"
+        x:Class="Inanna.Views.MainWindow"
         x:DataType="viewModels:MainWindowViewModel"
-        Title="YT-DLP Wrapper"
-        Width="680" Height="660"
+        Title="Inanna"
+        Width="550" Height="660"
         MinWidth="200" MinHeight="150"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource AppBackground}">
@@ -24,7 +24,7 @@
                         Height="96"
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Center">
-              <TextBlock Text="YT-DLP Wrapper"
+              <TextBlock Text="Inanna"
                         FontFamily="{StaticResource AppDisplayFontFamily}"
                         FontSize="44"
                         LetterSpacing="-1.6"
@@ -114,7 +114,7 @@
 
         <TextBox Height="48"
                   Text="{Binding Url}"
-                  PlaceholderText="https://…"
+                  PlaceholderText="Paste a video URL…"
                   IsEnabled="{Binding CanEdit}"
                   AutomationProperties.Name="URL">
           <TextBox.InnerRightContent>

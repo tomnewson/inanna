@@ -3,7 +3,7 @@ using System.Text;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public abstract class PlatformServices(Func<Window?> getWindow, ApplicationPaths paths) : IPlatformServices
 {
@@ -108,7 +108,7 @@ internal sealed class WindowsPlatformServices : PlatformServices
     {
     }
 
-    protected override string BackendFileName => "yt-dlp-wrapper-backend.exe";
+    protected override string BackendFileName => "inanna-backend.exe";
 
     public override void RevealFile(string path) => StartDetached("explorer.exe", "/select,", path);
 }
@@ -120,7 +120,7 @@ internal sealed class MacOsPlatformServices : PlatformServices
     {
     }
 
-    protected override string BackendFileName => "yt-dlp-wrapper-backend";
+    protected override string BackendFileName => "inanna-backend";
 
     public override void RevealFile(string path) => StartDetached("/usr/bin/open", "-R", path);
 }
@@ -132,7 +132,7 @@ internal sealed class UnsupportedPlatformServices : PlatformServices
     {
     }
 
-    protected override string BackendFileName => "yt-dlp-wrapper-backend";
+    protected override string BackendFileName => "inanna-backend";
 
     public override void RevealFile(string path) => throw new PlatformNotSupportedException();
 }

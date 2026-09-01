@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-    echo "usage: $0 /path/to/yt-dlp-wrapper-backend" >&2
+    echo "usage: $0 /path/to/inanna-backend" >&2
     exit 2
 fi
 
@@ -12,7 +12,7 @@ if [[ ! -x "$backend_path" ]]; then
     exit 1
 fi
 
-data_root=$(mktemp -d "${TMPDIR:-/tmp}/yt-dlp-wrapper-smoke.XXXXXX")
+data_root=$(mktemp -d "${TMPDIR:-/tmp}/inanna-smoke.XXXXXX")
 request_pipe="$data_root/requests"
 response_pipe="$data_root/responses"
 mkfifo "$request_pipe" "$response_pipe"

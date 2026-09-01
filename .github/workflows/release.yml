@@ -66,16 +66,16 @@ jobs:
           global-json-file: global.json
 
       - name: Restore .NET packages
-        run: dotnet restore YtDlpWrapper.slnx
+        run: dotnet restore Inanna.slnx
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
       - name: Check .NET formatting
-        run: dotnet format YtDlpWrapper.slnx --verify-no-changes --no-restore
+        run: dotnet format Inanna.slnx --verify-no-changes --no-restore
 
       - name: Run platform-neutral .NET tests
-        run: dotnet test YtDlpWrapper.slnx --no-restore -m:1 --disable-build-servers -warnaserror
+        run: dotnet test Inanna.slnx --no-restore -m:1 --disable-build-servers -warnaserror
 
   build-windows:
     needs: prepare
@@ -100,7 +100,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Restore .NET packages
-        run: dotnet restore src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj --runtime win-x64
+        run: dotnet restore src/dotnet/Inanna.App/Inanna.App.csproj --runtime win-x64
 
       - name: Run Clippy
         run: cargo clippy --all-targets --target x86_64-pc-windows-msvc --locked -- -D warnings
@@ -110,12 +110,12 @@ jobs:
 
       - name: Build Rust backend
         env:
-          YT_DLP_WRAPPER_VERSION: ${{ needs.prepare.outputs.version }}
+          INANNA_VERSION: ${{ needs.prepare.outputs.version }}
         run: cargo build --release --target x86_64-pc-windows-msvc --locked
 
       - name: Publish Avalonia frontend
         run: >-
-          dotnet publish src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj
+          dotnet publish src/dotnet/Inanna.App/Inanna.App.csproj
           --configuration Release
           --runtime win-x64
           --self-contained true
@@ -125,22 +125,22 @@ jobs:
           -p:PublishTrimmed=false
           -p:DebugType=None
           -p:Version=${{ needs.prepare.outputs.version }}
-          --output dist/yt-dlp-wrapper
+          --output dist/inanna
 
       - name: Assemble portable application
         shell: pwsh
         run: |
-          Remove-Item dist/yt-dlp-wrapper/*.pdb -ErrorAction SilentlyContinue
-          Copy-Item target/x86_64-pc-windows-msvc/release/yt-dlp-wrapper-backend.exe dist/yt-dlp-wrapper/
-          Copy-Item COPYING,README.md,THIRD_PARTY.md dist/yt-dlp-wrapper/
+          Remove-Item dist/inanna/*.pdb -ErrorAction SilentlyContinue
+          Copy-Item target/x86_64-pc-windows-msvc/release/inanna-backend.exe dist/inanna/
+          Copy-Item COPYING,README.md,THIRD_PARTY.md dist/inanna/
 
       - name: Smoke-test backend protocol
         shell: pwsh
-        run: ./scripts/backend-smoke.ps1 dist/yt-dlp-wrapper/yt-dlp-wrapper-backend.exe
+        run: ./scripts/backend-smoke.ps1 dist/inanna/inanna-backend.exe
 
       - name: Create portable ZIP
         shell: pwsh
-        run: Compress-Archive -Path dist/yt-dlp-wrapper -DestinationPath dist/yt-dlp-wrapper-windows-x64.zip
+        run: Compress-Archive -Path dist/inanna -DestinationPath dist/inanna-windows-x64.zip
 
       - name: Install Velopack CLI
         if: startsWith(github.ref, 'refs/tags/v')
@@ -157,13 +157,14 @@ jobs:
 
       - name: Build installer and update packages
         if: startsWith(github.ref, 'refs/tags/v')
+        # packId and mainExe are stable update identities; packTitle is the brand.
         run: >-
           vpk pack
           --packId yt-dlp-wrapper
           --packVersion ${{ needs.prepare.outputs.version }}
-          --packDir dist/yt-dlp-wrapper
+          --packDir dist/inanna
           --mainExe yt-dlp-wrapper.exe
-          --packTitle "YT-DLP Wrapper"
+          --packTitle "Inanna"
           --packAuthors "Tom Newson"
           --runtime win-x64
           --icon assets/icons/app-icon.ico
@@ -178,21 +179,21 @@ jobs:
           Copy-Item dist/velopack/releases.win.json dist/release-assets/
           Copy-Item "dist/velopack/yt-dlp-wrapper-$version-full.nupkg" dist/release-assets/
           Copy-Item "dist/velopack/yt-dlp-wrapper-$version-delta.nupkg" dist/release-assets/ -ErrorAction SilentlyContinue
-          Copy-Item dist/velopack/*-Setup.exe dist/release-assets/YT-DLP-Wrapper-Installer.exe
-          Copy-Item dist/velopack/*-Portable.zip dist/release-assets/YT-DLP-Wrapper-Portable.zip
+          Copy-Item dist/velopack/*-Setup.exe dist/release-assets/Inanna-Installer.exe
+          Copy-Item dist/velopack/*-Portable.zip dist/release-assets/Inanna-Portable.zip
 
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: yt-dlp-wrapper-windows-x64
-          path: dist/yt-dlp-wrapper-windows-x64.zip
+          name: inanna-windows-x64
+          path: dist/inanna-windows-x64.zip
           if-no-files-found: error
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: yt-dlp-wrapper-windows-release-assets
+          name: inanna-windows-release-assets
           path: dist/release-assets/*
           if-no-files-found: error
 
@@ -235,17 +236,17 @@ jobs:
 
       - name: Build macOS ARM64 application bundle
         env:
-          YT_DLP_WRAPPER_VERSION: ${{ needs.prepare.outputs.version }}
+          INANNA_VERSION: ${{ needs.prepare.outputs.version }}
         run: ./scripts/build-macos-arm64.sh
 
       - name: Verify native executables and backend protocol
         run: |
-          app='dist/macos-arm64/YT-DLP Wrapper.app/Contents/MacOS'
+          app='dist/macos-arm64/Inanna.app/Contents/MacOS'
           test "$(lipo -archs "$app/yt-dlp-wrapper")" = "arm64"
-          test "$(lipo -archs "$app/yt-dlp-wrapper-backend")" = "arm64"
-          ./scripts/backend-smoke.sh "$app/yt-dlp-wrapper-backend"
-          test -f 'dist/macos-arm64/YT-DLP Wrapper.app/Contents/Resources/Assets.car'
-          codesign --verify --deep --strict 'dist/macos-arm64/YT-DLP Wrapper.app'
+          test "$(lipo -archs "$app/inanna-backend")" = "arm64"
+          ./scripts/backend-smoke.sh "$app/inanna-backend"
+          test -f 'dist/macos-arm64/Inanna.app/Contents/Resources/Assets.car'
+          codesign --verify --deep --strict 'dist/macos-arm64/Inanna.app'
 
       - name: Install Velopack CLI
         if: startsWith(github.ref, 'refs/tags/v')
@@ -263,13 +264,14 @@ jobs:
 
       - name: Build macOS installer and update packages
         if: startsWith(github.ref, 'refs/tags/v')
+        # Keep the package ID and entry point stable across the display-name change.
         run: >-
           vpk pack
           --packId yt-dlp-wrapper-macos
           --packVersion ${{ needs.prepare.outputs.version }}
-          --packDir "dist/macos-arm64/YT-DLP Wrapper.app"
+          --packDir "dist/macos-arm64/Inanna.app"
           --mainExe yt-dlp-wrapper
-          --packTitle "YT-DLP Wrapper"
+          --packTitle "Inanna"
           --packAuthors "Tom Newson"
           --runtime osx-arm64
           --channel osx
@@ -283,10 +285,10 @@ jobs:
           test -n "$portable"
           verification_dir=$(mktemp -d)
           ditto -x -k "$portable" "$verification_dir"
-          packaged_app="$verification_dir/YT-DLP Wrapper.app"
+          packaged_app="$verification_dir/Inanna.app"
           codesign --verify --deep --strict "$packaged_app"
           test "$(lipo -archs "$packaged_app/Contents/MacOS/yt-dlp-wrapper")" = "arm64"
-          test "$(lipo -archs "$packaged_app/Contents/MacOS/yt-dlp-wrapper-backend")" = "arm64"
+          test "$(lipo -archs "$packaged_app/Contents/MacOS/inanna-backend")" = "arm64"
           test -x "$packaged_app/Contents/MacOS/UpdateMac"
           test -f "$packaged_app/Contents/MacOS/sq.version"
           test -f "$packaged_app/Contents/Resources/Assets.car"
@@ -305,21 +307,21 @@ jobs:
           portable=$(find dist/velopack -maxdepth 1 -type f -name '*-Portable.zip' -print -quit)
           test -n "$installer"
           test -n "$portable"
-          cp "$installer" dist/release-assets/YT-DLP-Wrapper-macOS-arm64-Installer.pkg
-          cp "$portable" dist/release-assets/YT-DLP-Wrapper-macOS-arm64-Portable.zip
+          cp "$installer" dist/release-assets/Inanna-macOS-arm64-Installer.pkg
+          cp "$portable" dist/release-assets/Inanna-macOS-arm64-Portable.zip
 
       - name: Upload macOS ARM64 application
         uses: actions/upload-artifact@v4
         with:
-          name: yt-dlp-wrapper-macos-arm64
-          path: dist/macos-arm64/YT-DLP-Wrapper-macOS-arm64.zip
+          name: inanna-macos-arm64
+          path: dist/macos-arm64/Inanna-macOS-arm64.zip
           if-no-files-found: error
 
       - name: Upload macOS release assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: yt-dlp-wrapper-macos-release-assets
+          name: inanna-macos-release-assets
           path: dist/release-assets/*
           if-no-files-found: error
 
@@ -333,7 +335,7 @@ jobs:
       - name: Download installer and update packages
         uses: actions/download-artifact@v4
         with:
-          pattern: yt-dlp-wrapper-*-release-assets
+          pattern: inanna-*-release-assets
           merge-multiple: true
           path: dist/release-assets
 
@@ -345,11 +347,11 @@ jobs:
           download_notes=$(printf '%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s\n\n%s' \
             '<!-- user-downloads -->' \
             '## Download for Windows' \
-            "**Most users:** [Download the Windows installer]($download_base/YT-DLP-Wrapper-Installer.exe) and run it." \
-            "**Portable use:** [Download the portable ZIP]($download_base/YT-DLP-Wrapper-Portable.zip), extract it, and run the app without installing it." \
+            "**Most users:** [Download the Windows installer]($download_base/Inanna-Installer.exe) and run it." \
+            "**Portable use:** [Download the portable ZIP]($download_base/Inanna-Portable.zip), extract it, and run the app without installing it." \
             '## Download for Apple Silicon macOS' \
-            "**Most users:** [Download the macOS installer]($download_base/YT-DLP-Wrapper-macOS-arm64-Installer.pkg) and run it." \
-            "**Portable use:** [Download the portable ZIP]($download_base/YT-DLP-Wrapper-macOS-arm64-Portable.zip), extract it, and move the app to Applications." \
+            "**Most users:** [Download the macOS installer]($download_base/Inanna-macOS-arm64-Installer.pkg) and run it." \
+            "**Portable use:** [Download the portable ZIP]($download_base/Inanna-macOS-arm64-Portable.zip), extract it, and move the app to Applications." \
             'The other files are used by automatic updates or contain the source code.')
 
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

@@ -580,6 +580,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "inanna"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "fs2",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1797,30 +1821,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "synstructure",
-]
-
-[[package]]
-name = "yt-dlp-wrapper"
-version = "0.1.0"
-dependencies = [
- "directories",
- "fs2",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "url",
- "uuid",
- "windows-sys 0.61.2",
- "zip",
 ]
 
 [[package]]

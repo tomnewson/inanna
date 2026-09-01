@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/dotnet/Inanna.App/Inanna.App.csproj" />
+  <Project Path="tests/Inanna.App.Tests/Inanna.App.Tests.csproj" />
+</Solution>

@@ -1,4 +1,8 @@
-use crate::{config, model::ActiveToolset, platform::ToolPlatform};
+use crate::{
+    config::{self, retry_transient_windows_file_operation},
+    model::ActiveToolset,
+    platform::ToolPlatform,
+};
 use fs2::FileExt;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -144,7 +148,7 @@ impl ToolManager {
         fs::create_dir_all(root.join("tools"))?;
         fs::create_dir_all(root.join("staging"))?;
         let client = reqwest::Client::builder()
-            .user_agent(format!("yt-dlp-wrapper/{}", crate::application_version()))
+            .user_agent(format!("inanna/{}", crate::application_version()))
             .connect_timeout(std::time::Duration::from_secs(8))
             .build()?;
         let release_cache = match config::read_json(&root.join("release-cache.json")) {
@@ -179,7 +183,11 @@ impl ToolManager {
         if active.directory.is_relative() {
             active.directory = self.root.join(&active.directory);
         }
-        Ok(self.validate_paths(&active).then_some(active))
+        if !self.validate_paths(&active) {
+            return Ok(None);
+        }
+        self.cleanup_old_toolsets(&active.directory);
+        Ok(Some(active))
     }
 
     pub async fn check_updates(
@@ -386,7 +394,7 @@ impl ToolManager {
             &plan.deno.version,
         );
         let final_directory = self.root.join("tools").join(&id);
-        fs::rename(stage, &final_directory)?;
+        retry_transient_windows_file_operation(|| fs::rename(stage, &final_directory))?;
 
         let relative_directory = PathBuf::from("tools").join(&id);
         let stored = ActiveToolset {
@@ -405,7 +413,6 @@ impl ToolManager {
 
         let mut active = stored;
         active.directory = self.root.join(&active.directory);
-        self.cleanup_old_toolsets(&active.directory);
         Ok(active)
     }
 

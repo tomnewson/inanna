@@ -30,7 +30,7 @@ def main() -> None:
         fail(f"Source PNG does not exist: {source}")
 
     images: list[tuple[int, bytes]] = []
-    with tempfile.TemporaryDirectory(prefix="yt-dlp-wrapper-icon-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="inanna-icon-") as temporary:
         temporary_path = Path(temporary)
         for size in ICON_SIZES:
             resized = temporary_path / f"icon-{size}.png"

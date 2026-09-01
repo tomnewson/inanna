@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $repositoryRoot "src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj"
-$backend = Join-Path $repositoryRoot "target/x86_64-pc-windows-msvc/debug/yt-dlp-wrapper-backend.exe"
-$appOutput = Join-Path $repositoryRoot "src/dotnet/YtDlpWrapper.App/bin/Debug/net10.0"
-$previousBackendVersion = $env:YT_DLP_WRAPPER_VERSION
+$project = Join-Path $repositoryRoot "src/dotnet/Inanna.App/Inanna.App.csproj"
+$backend = Join-Path $repositoryRoot "target/x86_64-pc-windows-msvc/debug/inanna-backend.exe"
+$appOutput = Join-Path $repositoryRoot "src/dotnet/Inanna.App/bin/Debug/net10.0"
+$previousBackendVersion = $env:INANNA_VERSION
 
 Push-Location $repositoryRoot
 try {
@@ -13,7 +13,7 @@ try {
         throw "Could not determine a semantic build version from the repository's Git tags."
     }
     $buildVersion = $versionTag.Substring(1)
-    $env:YT_DLP_WRAPPER_VERSION = $buildVersion
+    $env:INANNA_VERSION = $buildVersion
 
     & cargo build --target x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) {
@@ -33,6 +33,6 @@ try {
     }
 }
 finally {
-    $env:YT_DLP_WRAPPER_VERSION = $previousBackendVersion
+    $env:INANNA_VERSION = $previousBackendVersion
     Pop-Location
 }

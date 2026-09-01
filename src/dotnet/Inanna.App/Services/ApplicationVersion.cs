@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public static class ApplicationVersion
 {

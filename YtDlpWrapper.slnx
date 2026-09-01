@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj" />
-  <Project Path="tests/YtDlpWrapper.App.Tests/YtDlpWrapper.App.Tests.csproj" />
-</Solution>

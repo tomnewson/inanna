@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Xunit;
-using YtDlpWrapper.Services;
-using YtDlpWrapper.ViewModels;
+using Inanna.Services;
+using Inanna.ViewModels;
 
-namespace YtDlpWrapper.App.Tests;
+namespace Inanna.App.Tests;
 
 public sealed class MainWindowViewModelTests
 {
@@ -118,6 +118,27 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task CompletedToolInstallClearsStatus()
+    {
+        var backend = new FakeBackendClient();
+        backend.Enqueue("installTools", Json("""{"operationId":"operation-2"}"""));
+        var viewModel = CreateViewModel(backend);
+        viewModel.UpdateAvailable = true;
+        viewModel.CanInstallTools = true;
+        viewModel.Busy = false;
+
+        await viewModel.InstallToolsCommand.ExecuteAsync(null);
+        backend.Raise(new BackendEvent(
+            "operation-2",
+            "operationCompleted",
+            Json("""{"operationKind":"toolInstall"}""")));
+
+        Assert.True(viewModel.ToolsReady);
+        Assert.False(viewModel.ShowStatusText);
+        Assert.Equal(string.Empty, viewModel.StatusText);
+    }
+
+    [Fact]
     public async Task FailedStartupCanBeRetriedExplicitly()
     {
         var backend = new FakeBackendClient();
@@ -157,6 +178,9 @@ public sealed class MainWindowViewModelTests
         var viewModel = CreateViewModel(new FakeBackendClient());
 
         viewModel.StatusText = "Ready.";
+        Assert.False(viewModel.ShowStatusText);
+
+        viewModel.StatusText = string.Empty;
         Assert.False(viewModel.ShowStatusText);
 
         viewModel.StatusText = "Could not check for updates. Cached tools are ready.";
@@ -217,7 +241,7 @@ public sealed class PlatformServicesTests
     [Fact]
     public void BackendUsesPersistentApplicationDataRoot()
     {
-        var paths = new ApplicationPaths("C:/Users/test/AppData/Local/YT-DLP Wrapper");
+        var paths = new ApplicationPaths("C:/Users/test/AppData/Local/Inanna");
         var startInfo = new WindowsPlatformServices(() => null, paths).CreateBackendStartInfo();
 
         Assert.Equal("--data-root", startInfo.ArgumentList[0]);
@@ -226,12 +250,143 @@ public sealed class PlatformServicesTests
 
 }
 
+public sealed class LegacyDataMigrationTests
+{
+    [Fact]
+    public void CopiesPersistentDataOnceWithoutRemovingLegacyFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"inanna-migration-tests-{Guid.NewGuid():N}");
+        var legacyRoot = Path.Combine(root, "YT-DLP Wrapper");
+        var destinationRoot = Path.Combine(root, "Inanna");
+        var legacyTool = Path.Combine(legacyRoot, "tools", "one", "yt-dlp");
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(legacyTool)!);
+            File.WriteAllText(Path.Combine(legacyRoot, "config.json"), "legacy-config");
+            File.WriteAllText(legacyTool, "tool");
+            Directory.CreateDirectory(Path.Combine(legacyRoot, "logs"));
+            File.WriteAllText(Path.Combine(legacyRoot, "logs", "legacy.log"), "log");
+            Directory.CreateDirectory(Path.Combine(legacyRoot, "staging"));
+            File.WriteAllText(Path.Combine(legacyRoot, "staging", "partial"), "partial");
+            File.WriteAllText(Path.Combine(legacyRoot, "update.lock"), string.Empty);
+
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(
+                    legacyTool,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            Assert.True(LegacyDataMigration.TryMigrate(legacyRoot, destinationRoot));
+
+            Assert.Equal(
+                "legacy-config",
+                File.ReadAllText(Path.Combine(destinationRoot, "config.json")));
+            var migratedTool = Path.Combine(destinationRoot, "tools", "one", "yt-dlp");
+            Assert.Equal("tool", File.ReadAllText(migratedTool));
+            Assert.True(File.Exists(Path.Combine(legacyRoot, "config.json")));
+            Assert.True(File.Exists(legacyTool));
+            Assert.False(Directory.Exists(Path.Combine(destinationRoot, "logs")));
+            Assert.False(Directory.Exists(Path.Combine(destinationRoot, "staging")));
+            Assert.False(File.Exists(Path.Combine(destinationRoot, "update.lock")));
+            Assert.True(File.Exists(Path.Combine(
+                destinationRoot,
+                LegacyDataMigration.CompletionMarkerFileName)));
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.True((File.GetUnixFileMode(migratedTool) & UnixFileMode.UserExecute) != 0);
+            }
+
+            File.WriteAllText(Path.Combine(legacyRoot, "created-later.json"), "later");
+            Assert.True(LegacyDataMigration.TryMigrate(legacyRoot, destinationRoot));
+            Assert.False(File.Exists(Path.Combine(destinationRoot, "created-later.json")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void PreservesFilesAlreadyCreatedByInanna()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"inanna-migration-tests-{Guid.NewGuid():N}");
+        var legacyRoot = Path.Combine(root, "YT-DLP Wrapper");
+        var destinationRoot = Path.Combine(root, "Inanna");
+
+        try
+        {
+            Directory.CreateDirectory(legacyRoot);
+            Directory.CreateDirectory(destinationRoot);
+            File.WriteAllText(Path.Combine(legacyRoot, "config.json"), "legacy-config");
+            File.WriteAllText(Path.Combine(destinationRoot, "config.json"), "inanna-config");
+
+            Assert.True(LegacyDataMigration.TryMigrate(legacyRoot, destinationRoot));
+
+            Assert.Equal(
+                "inanna-config",
+                File.ReadAllText(Path.Combine(destinationRoot, "config.json")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void LockedLegacyFileDefersMigrationWithoutThrowingOrDeletingSource()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"inanna-migration-tests-{Guid.NewGuid():N}");
+        var legacyRoot = Path.Combine(root, "YT-DLP Wrapper");
+        var destinationRoot = Path.Combine(root, "Inanna");
+        var legacyConfig = Path.Combine(legacyRoot, "config.json");
+
+        try
+        {
+            Directory.CreateDirectory(legacyRoot);
+            File.WriteAllText(legacyConfig, "legacy-config");
+
+            using (new FileStream(
+                       legacyConfig,
+                       FileMode.Open,
+                       FileAccess.ReadWrite,
+                       FileShare.None))
+            {
+                Assert.False(LegacyDataMigration.TryMigrate(legacyRoot, destinationRoot));
+                Assert.True(File.Exists(legacyConfig));
+                Assert.False(File.Exists(Path.Combine(
+                    destinationRoot,
+                    LegacyDataMigration.CompletionMarkerFileName)));
+            }
+
+            Assert.True(LegacyDataMigration.TryMigrate(legacyRoot, destinationRoot));
+            Assert.Equal(
+                "legacy-config",
+                File.ReadAllText(Path.Combine(destinationRoot, "config.json")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+}
+
 public sealed class ApplicationUpdaterTests
 {
     [Fact]
     public async Task UpdateChecksAreThrottledForFiveMinutesAcrossInstances()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"yt-dlp-wrapper-tests-{Guid.NewGuid():N}");
+        var directory = Path.Combine(Path.GetTempPath(), $"inanna-tests-{Guid.NewGuid():N}");
         var timestampPath = Path.Combine(directory, "last-update-check.txt");
         var now = new DateTimeOffset(2026, 8, 21, 12, 0, 0, TimeSpan.Zero);
         var firstInner = new FakeApplicationUpdater();

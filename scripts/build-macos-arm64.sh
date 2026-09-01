@@ -2,12 +2,12 @@
 set -euo pipefail
 
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-project="$repository_root/src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj"
+project="$repository_root/src/dotnet/Inanna.App/Inanna.App.csproj"
 target_triple=aarch64-apple-darwin
 runtime=osx-arm64
 dist_root="$repository_root/dist/macos-arm64"
 publish_output="$dist_root/publish"
-app_bundle="$dist_root/YT-DLP Wrapper.app"
+app_bundle="$dist_root/Inanna.app"
 app_macos="$app_bundle/Contents/MacOS"
 app_resources="$app_bundle/Contents/Resources"
 icon_source="$repository_root/assets/icons/app-icon.icon"
@@ -33,7 +33,7 @@ if [[ ! "$xcode_major" =~ ^[0-9]+$ ]] || (( xcode_major < 26 )); then
     exit 1
 fi
 
-build_version=${YT_DLP_WRAPPER_VERSION:-}
+build_version=${INANNA_VERSION:-}
 if [[ -z "$build_version" ]]; then
     version_tag=$(git -C "$repository_root" describe --tags --abbrev=0 --match 'v[0-9]*')
     build_version=${version_tag#v}
@@ -47,7 +47,7 @@ bundle_version=${build_version%%[-+]*}
 rm -rf "$dist_root"
 mkdir -p "$publish_output" "$app_macos" "$app_resources" "$icon_output"
 
-export YT_DLP_WRAPPER_VERSION=$build_version
+export INANNA_VERSION=$build_version
 cargo build \
     --manifest-path "$repository_root/Cargo.toml" \
     --release \
@@ -65,8 +65,8 @@ dotnet publish "$project" \
     --output "$publish_output"
 
 cp -R "$publish_output/." "$app_macos/"
-cp "$repository_root/target/$target_triple/release/yt-dlp-wrapper-backend" "$app_macos/"
-chmod 755 "$app_macos/yt-dlp-wrapper" "$app_macos/yt-dlp-wrapper-backend"
+cp "$repository_root/target/$target_triple/release/inanna-backend" "$app_macos/"
+chmod 755 "$app_macos/yt-dlp-wrapper" "$app_macos/inanna-backend"
 find "$app_macos" -name '*.pdb' -delete
 
 sed \
@@ -97,10 +97,10 @@ cp -R "$icon_output/." "$app_resources/"
 cp "$repository_root/COPYING" "$repository_root/README.md" "$repository_root/THIRD_PARTY.md" "$app_resources/"
 
 codesign --force --deep --sign - "$app_bundle"
-rm -f "$dist_root/YT-DLP-Wrapper-macOS-arm64.zip"
+rm -f "$dist_root/Inanna-macOS-arm64.zip"
 ditto -c -k --sequesterRsrc --keepParent \
     "$app_bundle" \
-    "$dist_root/YT-DLP-Wrapper-macOS-arm64.zip"
+    "$dist_root/Inanna-macOS-arm64.zip"
 
 echo "Built $app_bundle"
-echo "Built $dist_root/YT-DLP-Wrapper-macOS-arm64.zip"
+echo "Built $dist_root/Inanna-macOS-arm64.zip"

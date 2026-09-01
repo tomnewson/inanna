@@ -1,6 +1,6 @@
 # Third-party software
 
-yt-dlp-wrapper downloads and runs separate third-party programs.
+Inanna downloads and runs separate third-party programs.
 
 | Program | Source | Licence summary |
 | --- | --- | --- |

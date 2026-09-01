@@ -17,6 +17,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/dotnet/YtDlpWrapper.App/YtDlpWrapper.App.csproj" />
+    <ProjectReference Include="../../src/dotnet/Inanna.App/Inanna.App.csproj" />
   </ItemGroup>
 </Project>

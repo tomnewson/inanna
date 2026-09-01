@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace YtDlpWrapper.Services;
+namespace Inanna.Services;
 
 public interface IBackendClient : IAsyncDisposable
 {
