@@ -1,21 +1,21 @@
 {
   "fill" : {
     "linear-gradient" : [
-      "display-p3:0.67897,0.26433,0.23365,1.00000",
-      "display-p3:0.89527,0.56669,0.54958,1.00000"
+      "display-p3:1.00000,0.48629,0.44828,1.00000",
+      "display-p3:0.91718,0.56141,0.56734,1.00000"
     ]
   },
   "groups" : [
     {
-      "blend-mode" : "darken",
+      "blend-mode" : "overlay",
       "blur-material" : 0.25,
       "layers" : [
         {
-          "blend-mode" : "screen",
+          "blend-mode" : "hard-light",
           "fill" : "automatic",
           "image-name" : "app-icon_Layer 3.svg",
           "name" : "app-icon_Layer 3",
-          "opacity" : 0.66,
+          "opacity" : 1,
           "position" : {
             "scale" : 1.5,
             "translation-in-points" : [
@@ -60,11 +60,6 @@
           0,
           0
         ]
-      },
-      "refractivity" : {
-        "depth" : 0.6185546875,
-        "enabled" : false,
-        "strength" : -0.5941015625
       },
       "shadow" : {
         "kind" : "layer-color",
