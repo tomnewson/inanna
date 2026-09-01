@@ -1,6 +1,6 @@
 # Inanna
 ## Install
-For normal use: [Download Latest Release](https://github.com/tomnewson/yt-dlp-wrapper/releases)
+For normal use: [Download Latest Release](https://github.com/tomnewson/inanna/releases)
 
 For development: See build instructions below.
 
