@@ -42,8 +42,6 @@ The sidecar protocol is private to matching application releases. Standard outpu
 
 Installed builds check this repository's GitHub Releases at startup. When an application update is available, the interface can download it and restart into the new version. Release packages are produced with Velopack; delta packages are used when a compatible previous release is available. Development and portable builds do not attempt to update themselves.
 
-Inanna retains the original Velopack package IDs, executable name, macOS bundle identifier, and update endpoint as stable technical identifiers. This lets existing installations update in place while the visible application and installer names use Inanna. On its first normal launch, Inanna copies persistent settings and managed tools from the legacy application-data directory into the new `Inanna` directory. The legacy directory is left untouched; if a file is locked, that launch keeps using the legacy directory and retries the copy next time.
-
 Application code and managed tools have separate update lifecycles. Replacing the application does not replace the managed tools or settings.
 
 The backend checks these official release sources at startup:
