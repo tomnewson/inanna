@@ -27,27 +27,28 @@
         {
           "blend-mode" : "normal",
           "glass" : true,
-          "image-name" : "app-icon_Layer 1.svg",
-          "name" : "app-icon_Layer 1",
-          "opacity" : 0.66,
-          "position" : {
-            "scale" : 1.16,
-            "translation-in-points" : [
-              -117.42006819019616,
-              40.00000000000006
-            ]
-          }
-        },
-        {
-          "blend-mode" : "normal",
           "image-name" : "app-icon_Layer 2.svg",
           "name" : "app-icon_Layer 2",
-          "opacity" : 0.66,
+          "opacity" : 0.5,
           "position" : {
             "scale" : 1.16,
             "translation-in-points" : [
               118.37682857132057,
               32.000000000000114
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "glass" : true,
+          "image-name" : "app-icon_Layer 1.svg",
+          "name" : "app-icon_Layer 1",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 1.16,
+            "translation-in-points" : [
+              -117.42006819019616,
+              40.00000000000006
             ]
           }
         }
@@ -63,12 +64,12 @@
       },
       "shadow" : {
         "kind" : "layer-color",
-        "opacity" : 1
+        "opacity" : 0.35
       },
       "specular" : true,
       "translucency" : {
         "enabled" : true,
-        "value" : 0.45
+        "value" : 0
       }
     }
   ],

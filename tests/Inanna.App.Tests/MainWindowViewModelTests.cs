@@ -381,6 +381,125 @@ public sealed class LegacyDataMigrationTests
     }
 }
 
+public sealed class MacApplicationBundleMigrationTests
+{
+    [Fact]
+    public void RenamesLegacyBundleWithoutChangingItsContents()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"inanna-bundle-tests-{Guid.NewGuid():N}");
+        var legacyBundle = Path.Combine(root, MacApplicationBundleMigration.LegacyBundleName);
+        var executable = Path.Combine(legacyBundle, "Contents", "MacOS", "yt-dlp-wrapper");
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+            File.WriteAllText(executable, "frontend");
+
+            var renamedExecutable = MacApplicationBundleMigration.TryRenameBundle(legacyBundle);
+
+            Assert.Equal(
+                Path.Combine(root, "Inanna.app", "Contents", "MacOS", "yt-dlp-wrapper"),
+                renamedExecutable);
+            Assert.False(Directory.Exists(legacyBundle));
+            Assert.Equal("frontend", File.ReadAllText(renamedExecutable!));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void LeavesBothBundlesUntouchedWhenInannaAlreadyExists()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"inanna-bundle-tests-{Guid.NewGuid():N}");
+        var legacyBundle = Path.Combine(root, MacApplicationBundleMigration.LegacyBundleName);
+        var legacyExecutable = Path.Combine(
+            legacyBundle,
+            "Contents",
+            "MacOS",
+            "yt-dlp-wrapper");
+        var currentBundle = Path.Combine(root, MacApplicationBundleMigration.CurrentBundleName);
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(legacyExecutable)!);
+            File.WriteAllText(legacyExecutable, "legacy");
+            Directory.CreateDirectory(currentBundle);
+            File.WriteAllText(Path.Combine(currentBundle, "keep.txt"), "current");
+
+            Assert.Null(MacApplicationBundleMigration.TryRenameBundle(legacyBundle));
+
+            Assert.Equal("legacy", File.ReadAllText(legacyExecutable));
+            Assert.Equal("current", File.ReadAllText(Path.Combine(currentBundle, "keep.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void FindsOnlyTheLegacyApplicationBundle()
+    {
+        Assert.Equal(
+            "/Applications/YT-DLP Wrapper.app",
+            MacApplicationBundleMigration.FindLegacyBundleRoot(
+                "/Applications/YT-DLP Wrapper.app/Contents/MacOS"));
+        Assert.Null(MacApplicationBundleMigration.FindLegacyBundleRoot(
+            "/Applications/Inanna.app/Contents/MacOS"));
+    }
+
+    [Fact]
+    public void UsesBundleRenamedByAnotherStartingInstance()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"inanna-bundle-tests-{Guid.NewGuid():N}");
+        var legacyBundle = Path.Combine(root, MacApplicationBundleMigration.LegacyBundleName);
+        var renamedExecutable = Path.Combine(
+            root,
+            MacApplicationBundleMigration.CurrentBundleName,
+            "Contents",
+            "MacOS",
+            "yt-dlp-wrapper");
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(renamedExecutable)!);
+            File.WriteAllText(renamedExecutable, "frontend");
+
+            Assert.Equal(
+                renamedExecutable,
+                MacApplicationBundleMigration.TryRenameBundle(legacyBundle));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void RestartDoesNotPropagateVelopackControlVariables()
+    {
+        var startInfo = MacApplicationBundleMigration.CreateRestartStartInfo(
+            "/Applications/Inanna.app/Contents/MacOS/yt-dlp-wrapper");
+
+        Assert.False(startInfo.UseShellExecute);
+        Assert.Equal("/Applications/Inanna.app/Contents/MacOS", startInfo.WorkingDirectory);
+        Assert.DoesNotContain(
+            startInfo.Environment.Keys,
+            name => name.StartsWith("VELOPACK_", StringComparison.OrdinalIgnoreCase));
+    }
+}
+
 public sealed class ApplicationUpdaterTests
 {
     [Fact]
