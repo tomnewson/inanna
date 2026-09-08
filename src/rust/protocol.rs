@@ -1,7 +1,5 @@
-use crate::engine::{
-    AppEngine, BackendError, DownloadParameters, EngineEvent, ErrorPayload, EventSink,
-};
-use crate::model::{DownloadMode, VideoQuality};
+use crate::engine::{AppEngine, BackendError, EngineEvent, ErrorPayload, EventSink};
+use crate::model::{DownloadMode, DownloadRequest, VideoQuality};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{io, path::PathBuf, sync::Arc};
@@ -222,7 +220,7 @@ async fn handle_request(
     }
 }
 
-fn parse_download(value: Value) -> Result<DownloadParameters, BackendError> {
+fn parse_download(value: Value) -> Result<DownloadRequest, BackendError> {
     let params = parse_params::<DownloadParams>(value)?;
     let mode = match params.mode.as_str() {
         "video" => DownloadMode::Video,
@@ -243,7 +241,7 @@ fn parse_download(value: Value) -> Result<DownloadParameters, BackendError> {
             )));
         }
     };
-    Ok(DownloadParameters {
+    Ok(DownloadRequest {
         url: params.url,
         mode,
         video_quality,

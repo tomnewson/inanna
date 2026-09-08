@@ -97,7 +97,6 @@ cp -R "$icon_output/." "$app_resources/"
 cp "$repository_root/COPYING" "$repository_root/README.md" "$repository_root/THIRD_PARTY.md" "$app_resources/"
 
 codesign --force --deep --sign - "$app_bundle"
-rm -f "$dist_root/Inanna-macOS-arm64.zip"
 ditto -c -k --sequesterRsrc --keepParent \
     "$app_bundle" \
     "$dist_root/Inanna-macOS-arm64.zip"

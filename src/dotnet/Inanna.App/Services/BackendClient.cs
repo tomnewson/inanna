@@ -43,7 +43,7 @@ public sealed class BackendClient(IPlatformServices platform) : IBackendClient
         }
 
         _stdoutTask = ReadStdoutAsync(_process);
-        _stderrTask = DiscardStderrAsync(_process);
+        _stderrTask = _process.StandardError.ReadToEndAsync();
         _ = ObserveExitAsync(_process);
         return Task.CompletedTask;
     }
@@ -144,9 +144,6 @@ public sealed class BackendClient(IPlatformServices platform) : IBackendClient
             FailPending(error);
         }
     }
-
-    private static async Task DiscardStderrAsync(Process process) =>
-        await process.StandardError.ReadToEndAsync();
 
     private async Task StopProcessAsync(Process process)
     {

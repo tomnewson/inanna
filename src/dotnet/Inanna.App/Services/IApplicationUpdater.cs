@@ -5,7 +5,6 @@ public sealed record ApplicationUpdate(string Version, object NativeUpdate);
 public interface IApplicationUpdater
 {
     bool CanUpdate { get; }
-    string CurrentVersion { get; }
     Task<ApplicationUpdate?> CheckForUpdatesAsync(CancellationToken cancellationToken = default);
     Task DownloadAsync(
         ApplicationUpdate update,

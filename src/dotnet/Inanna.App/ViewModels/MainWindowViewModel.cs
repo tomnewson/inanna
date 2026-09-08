@@ -32,7 +32,6 @@ public partial class MainWindowViewModel : ObservableObject
     [NotifyPropertyChangedFor(
         nameof(CanEdit),
         nameof(CanBrowse),
-        nameof(CanChangeQuality),
         nameof(CanDownload),
         nameof(ShowDownloadButton),
         nameof(ShowCancelButton),
@@ -46,11 +45,11 @@ public partial class MainWindowViewModel : ObservableObject
     private bool _cancellable;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanEdit), nameof(CanChangeQuality), nameof(CanDownload))]
+    [NotifyPropertyChangedFor(nameof(CanEdit), nameof(CanDownload))]
     private bool _toolsReady;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowInstallPanel), nameof(ShowUpdatePanel))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdatePanel))]
     private bool _setupRequired;
 
     [ObservableProperty]
@@ -95,16 +94,14 @@ public partial class MainWindowViewModel : ObservableObject
     private bool _engineUnavailable;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowApplicationUpdatePanel), nameof(CanInstallApplicationUpdate))]
+    [NotifyPropertyChangedFor(nameof(CanInstallApplicationUpdate))]
     private bool _applicationUpdateAvailable;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(
-        nameof(CanCheckForApplicationUpdates),
         nameof(CanInstallApplicationUpdate),
         nameof(CanEdit),
         nameof(CanBrowse),
-        nameof(CanChangeQuality),
         nameof(CanDownload))]
     private bool _applicationUpdateBusy;
 
@@ -113,9 +110,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private string _applicationUpdateStatus = string.Empty;
-
-    [ObservableProperty]
-    private string _applicationUpdateVersion = string.Empty;
 
     public MainWindowViewModel(
         IBackendClient backend,
@@ -141,14 +135,12 @@ public partial class MainWindowViewModel : ObservableObject
 
     public bool CanEdit => ToolsReady && !Busy && !ApplicationUpdateBusy;
     public bool CanBrowse => !Busy && !ApplicationUpdateBusy;
-    public bool CanChangeQuality => CanEdit;
     public bool HasUrl => !string.IsNullOrEmpty(Url);
     public bool CanDownload =>
-        ToolsReady && !Busy && !ApplicationUpdateBusy && !UpdateAvailable &&
+        CanEdit && !UpdateAvailable &&
         !string.IsNullOrWhiteSpace(Url) && !string.IsNullOrWhiteSpace(OutputFolder);
     public bool ShowDownloadButton => !Busy;
     public bool ShowCancelButton => Busy && Cancellable;
-    public bool ShowInstallPanel => SetupRequired;
     public bool ShowUpdatePanel => UpdateAvailable && !SetupRequired;
     public bool ShowDetailsButton => !string.IsNullOrWhiteSpace(DetailsText);
     public bool IsProgressIndeterminate => Busy && Progress <= 0;
@@ -157,9 +149,6 @@ public partial class MainWindowViewModel : ObservableObject
         !HasCompletedFile && !string.IsNullOrWhiteSpace(StatusText) && StatusText != "Ready.";
     public string DetailsButtonText => ShowDetails ? "Hide details" : "Details";
     public bool ShowRestartButton => EngineUnavailable && !Busy;
-    public bool ShowApplicationUpdatePanel => ApplicationUpdateAvailable;
-    public bool CanCheckForApplicationUpdates =>
-        _applicationUpdater.CanUpdate && !ApplicationUpdateBusy;
     public bool CanInstallApplicationUpdate =>
         ApplicationUpdateAvailable && !ApplicationUpdateBusy && !Busy;
     public async Task InitializeAsync()
@@ -202,7 +191,6 @@ public partial class MainWindowViewModel : ObservableObject
         {
             _applicationUpdate = await _applicationUpdater.CheckForUpdatesAsync();
             ApplicationUpdateAvailable = _applicationUpdate is not null;
-            ApplicationUpdateVersion = _applicationUpdate?.Version ?? string.Empty;
             ApplicationUpdateStatus = _applicationUpdate is null
                 ? "The application is up to date."
                 : $"Version {_applicationUpdate.Version} is available.";
@@ -211,7 +199,6 @@ public partial class MainWindowViewModel : ObservableObject
         {
             _applicationUpdate = null;
             ApplicationUpdateAvailable = false;
-            ApplicationUpdateVersion = string.Empty;
             ApplicationUpdateStatus = $"Could not check for updates: {error.Message}";
         }
         finally

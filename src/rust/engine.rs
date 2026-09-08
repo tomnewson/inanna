@@ -1,7 +1,7 @@
 use crate::{
     config::{self, AppConfig},
     media::{self, MediaError},
-    model::{ActiveToolset, DownloadMode, DownloadRequest, VideoQuality},
+    model::{ActiveToolset, DownloadRequest},
     platform::{self, ToolPlatform},
     tools::{ToolError, ToolManager, UpdatePlan},
 };
@@ -45,23 +45,10 @@ pub struct ToolCheckResult {
     pub status_text: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct DownloadParameters {
-    pub url: String,
-    pub mode: DownloadMode,
-    pub video_quality: VideoQuality,
-    pub output_directory: PathBuf,
-}
-
 #[derive(Clone)]
 pub struct OperationLease {
     pub id: String,
     pub token: CancellationToken,
-}
-
-struct ActiveOperation {
-    id: String,
-    token: CancellationToken,
 }
 
 pub struct AppEngine {
@@ -71,7 +58,7 @@ pub struct AppEngine {
     config: Mutex<AppConfig>,
     pending_update: AsyncMutex<Option<UpdatePlan>>,
     active_tools: RwLock<Option<ActiveToolset>>,
-    operation: Mutex<Option<ActiveOperation>>,
+    operation: Mutex<Option<OperationLease>>,
 }
 
 impl AppEngine {
@@ -146,10 +133,7 @@ impl AppEngine {
             id: Uuid::new_v4().to_string(),
             token: CancellationToken::new(),
         };
-        *current = Some(ActiveOperation {
-            id: lease.id.clone(),
-            token: lease.token.clone(),
-        });
+        *current = Some(lease.clone());
         Ok(lease)
     }
 
@@ -271,8 +255,8 @@ impl AppEngine {
 
     pub fn validate_download(
         &self,
-        mut parameters: DownloadParameters,
-    ) -> Result<DownloadParameters, BackendError> {
+        mut parameters: DownloadRequest,
+    ) -> Result<DownloadRequest, BackendError> {
         parameters.url = normalize_download_url(&parameters.url)?;
         if parameters.output_directory.as_os_str().is_empty() {
             return Err(BackendError::InvalidRequest(
@@ -285,7 +269,7 @@ impl AppEngine {
     pub async fn download(
         self: Arc<Self>,
         lease: OperationLease,
-        parameters: DownloadParameters,
+        parameters: DownloadRequest,
         events: EventSink,
     ) {
         let result = self.download_inner(&lease, parameters, &events).await;
@@ -313,7 +297,7 @@ impl AppEngine {
     async fn download_inner(
         &self,
         lease: &OperationLease,
-        parameters: DownloadParameters,
+        parameters: DownloadRequest,
         events: &EventSink,
     ) -> Result<PathBuf, BackendError> {
         let tools = self
@@ -322,12 +306,6 @@ impl AppEngine {
             .await
             .clone()
             .ok_or(BackendError::ToolsUnavailable)?;
-        let request = DownloadRequest {
-            url: parameters.url,
-            mode: parameters.mode,
-            video_quality: parameters.video_quality,
-            output_directory: parameters.output_directory,
-        };
         let event_sink = Arc::clone(events);
         let operation_id = lease.id.clone();
         let progress = Arc::new(move |update: crate::model::ProgressUpdate| {
@@ -346,7 +324,7 @@ impl AppEngine {
                 }),
             );
         });
-        match media::download_media(tools, request, lease.token.clone(), progress).await {
+        match media::download_media(tools, parameters, lease.token.clone(), progress).await {
             Ok(path) => Ok(path),
             Err(MediaError::Cancelled) => Err(BackendError::Cancelled),
             Err(error) => Err(error.into()),

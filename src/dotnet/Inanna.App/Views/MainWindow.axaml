@@ -35,7 +35,7 @@
       </Border>
 
       <StackPanel Grid.Row="1" Margin="32,26,32,30" Spacing="20">
-        <Border IsVisible="{Binding ShowApplicationUpdatePanel}"
+        <Border IsVisible="{Binding ApplicationUpdateAvailable}"
                 Background="{DynamicResource AppPanel}"
                 BorderBrush="{DynamicResource AppText}"
                 BorderThickness="2"
@@ -64,7 +64,7 @@
           </StackPanel>
         </Border>
 
-        <Border IsVisible="{Binding ShowInstallPanel}"
+        <Border IsVisible="{Binding SetupRequired}"
                 Background="{DynamicResource AppAccentStrong}"
                 Padding="20,18">
           <StackPanel Spacing="10">
@@ -137,7 +137,7 @@
                     Minimum="0" Maximum="3" TickFrequency="1"
                     IsSnapToTickEnabled="True"
                     Value="{Binding VideoQuality}"
-                    IsEnabled="{Binding CanChangeQuality}"
+                    IsEnabled="{Binding CanEdit}"
                     AutomationProperties.Name="Quality, audio only, 1080p, 1440p, or best" />
             <Grid Margin="10,0"
               Height="34"

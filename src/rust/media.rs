@@ -319,36 +319,20 @@ fn select_video_formats(
 ) -> Result<FormatSelection, MediaError> {
     let video_formats = formats
         .iter()
-        .enumerate()
-        .filter(|(_, format)| has_video(format) && format.has_drm != Some(true))
-        .collect::<Vec<_>>();
-    if video_formats.is_empty() {
+        .filter(|format| has_video(format) && format.has_drm != Some(true));
+    if video_formats.clone().next().is_none() {
         return Err(MediaError::NoSuitableFormat(
             "no video stream was reported".into(),
         ));
     }
 
-    let selected_resolution = select_resolution(&video_formats, video_quality);
-    let selected_resolution_formats = video_formats
-        .into_iter()
-        .filter(|(_, format)| {
+    let selected_resolution = select_resolution(video_formats.clone(), video_quality);
+    let video = video_formats
+        .filter(|format| {
             selected_resolution.is_none() || format_resolution(format) == selected_resolution
         })
-        .collect::<Vec<_>>();
-    let compatible_formats = selected_resolution_formats
-        .iter()
-        .copied()
-        .filter(|(_, format)| is_h264_codec(format.vcodec.as_deref()))
-        .collect::<Vec<_>>();
-    let candidates = if compatible_formats.is_empty() {
-        &selected_resolution_formats
-    } else {
-        &compatible_formats
-    };
-    let (_, video) = candidates
-        .iter()
-        .copied()
-        .max_by_key(|(index, _)| *index)
+        // yt-dlp orders formats from worst to best; max_by_key keeps the last tie.
+        .max_by_key(|format| is_h264_codec(format.vcodec.as_deref()))
         .ok_or_else(|| {
             MediaError::NoSuitableFormat(
                 "no video stream was reported at the selected resolution".into(),
@@ -404,25 +388,18 @@ fn select_video_formats(
     })
 }
 
-fn select_resolution(
-    formats: &[(usize, &AvailableFormat)],
+fn select_resolution<'a>(
+    formats: impl Iterator<Item = &'a AvailableFormat> + Clone,
     video_quality: VideoQuality,
 ) -> Option<u32> {
-    let mut resolutions = formats
-        .iter()
-        .filter_map(|(_, format)| format_resolution(format))
-        .collect::<Vec<_>>();
-    resolutions.sort_unstable();
-    resolutions.dedup();
-
+    let resolutions = formats.filter_map(format_resolution);
     match video_quality.maximum_dimension() {
         Some(limit) => resolutions
-            .iter()
-            .copied()
+            .clone()
             .filter(|resolution| *resolution <= limit)
             .max()
-            .or_else(|| resolutions.first().copied()),
-        None => resolutions.last().copied(),
+            .or_else(|| resolutions.min()),
+        None => resolutions.max(),
     }
 }
 
@@ -436,37 +413,10 @@ fn format_resolution(format: &AvailableFormat) -> Option<u32> {
 }
 
 fn select_audio_format(formats: &[AvailableFormat]) -> Result<FormatSelection, MediaError> {
-    let audio_only = formats
+    let audio = formats
         .iter()
-        .enumerate()
-        .filter(|(_, format)| {
-            has_audio(format) && !has_video(format) && format.has_drm != Some(true)
-        })
-        .collect::<Vec<_>>();
-    let all_audio = formats
-        .iter()
-        .enumerate()
-        .filter(|(_, format)| has_audio(format) && format.has_drm != Some(true))
-        .collect::<Vec<_>>();
-    let candidates = if audio_only.is_empty() {
-        &all_audio
-    } else {
-        &audio_only
-    };
-    let compatible = candidates
-        .iter()
-        .copied()
-        .filter(|(_, format)| is_aac_codec(format.acodec.as_deref()))
-        .collect::<Vec<_>>();
-    let candidates = if compatible.is_empty() {
-        candidates
-    } else {
-        &compatible
-    };
-    let (_, audio) = candidates
-        .iter()
-        .copied()
-        .max_by_key(|(index, _)| *index)
+        .filter(|format| has_audio(format) && format.has_drm != Some(true))
+        .max_by_key(|format| (!has_video(format), is_aac_codec(format.acodec.as_deref())))
         .ok_or_else(|| MediaError::NoSuitableFormat("no audio stream was reported".into()))?;
     let compatible = is_aac_codec(audio.acodec.as_deref());
     Ok(FormatSelection {
@@ -481,28 +431,10 @@ fn select_audio_format(formats: &[AvailableFormat]) -> Result<FormatSelection, M
 }
 
 fn best_audio_only(formats: &[AvailableFormat]) -> Option<&AvailableFormat> {
-    let candidates = formats
+    formats
         .iter()
-        .enumerate()
-        .filter(|(_, format)| {
-            has_audio(format) && !has_video(format) && format.has_drm != Some(true)
-        })
-        .collect::<Vec<_>>();
-    let compatible = candidates
-        .iter()
-        .copied()
-        .filter(|(_, format)| is_aac_codec(format.acodec.as_deref()))
-        .collect::<Vec<_>>();
-    let candidates = if compatible.is_empty() {
-        &candidates
-    } else {
-        &compatible
-    };
-    candidates
-        .iter()
-        .copied()
-        .max_by_key(|(index, _)| *index)
-        .map(|(_, format)| format)
+        .filter(|format| has_audio(format) && !has_video(format) && format.has_drm != Some(true))
+        .max_by_key(|format| is_aac_codec(format.acodec.as_deref()))
 }
 
 fn has_video(format: &AvailableFormat) -> bool {
@@ -571,16 +503,11 @@ async fn run_yt_dlp(
 
     command.args(crate::platform::yt_dlp_filename_arguments(&tools.platform));
 
-    match request.mode {
-        DownloadMode::Video => {
-            command.args(["--format", format_spec]);
-            if let Some(container) = merge_container {
-                command.args(["--merge-output-format", container]);
-            }
-        }
-        DownloadMode::AudioOnly => {
-            command.args(["--format", format_spec]);
-        }
+    command.args(["--format", format_spec]);
+    if request.mode == DownloadMode::Video
+        && let Some(container) = merge_container
+    {
+        command.args(["--merge-output-format", container]);
     }
     command.arg("--").arg(&request.url);
     configure_child(&mut command, &tools.directory);
@@ -925,64 +852,25 @@ fn parse_frame_rate(value: &str) -> Option<f64> {
 }
 
 fn youtube_sdr_bitrate_profile(resolution: u32, frames_per_second: f64) -> VideoBitrateProfile {
-    let high_frame_rate = frames_per_second >= 48.0;
-    match (resolution, high_frame_rate) {
-        (4320.., false) => VideoBitrateProfile {
-            target_kbps: 80_000,
-            maximum_kbps: 160_000,
-        },
-        (4320.., true) => VideoBitrateProfile {
-            target_kbps: 120_000,
-            maximum_kbps: 240_000,
-        },
-        (2160.., false) => VideoBitrateProfile {
-            target_kbps: 35_000,
-            maximum_kbps: 45_000,
-        },
-        (2160.., true) => VideoBitrateProfile {
-            target_kbps: 53_000,
-            maximum_kbps: 68_000,
-        },
-        (1440.., false) => VideoBitrateProfile {
-            target_kbps: 16_000,
-            maximum_kbps: 16_000,
-        },
-        (1440.., true) => VideoBitrateProfile {
-            target_kbps: 24_000,
-            maximum_kbps: 24_000,
-        },
-        (1080.., false) => VideoBitrateProfile {
-            target_kbps: 8_000,
-            maximum_kbps: 8_000,
-        },
-        (1080.., true) => VideoBitrateProfile {
-            target_kbps: 12_000,
-            maximum_kbps: 12_000,
-        },
-        (720.., false) => VideoBitrateProfile {
-            target_kbps: 5_000,
-            maximum_kbps: 5_000,
-        },
-        (720.., true) => VideoBitrateProfile {
-            target_kbps: 7_500,
-            maximum_kbps: 7_500,
-        },
-        (480.., false) => VideoBitrateProfile {
-            target_kbps: 2_500,
-            maximum_kbps: 2_500,
-        },
-        (480.., true) => VideoBitrateProfile {
-            target_kbps: 4_000,
-            maximum_kbps: 4_000,
-        },
-        (_, false) => VideoBitrateProfile {
-            target_kbps: 1_000,
-            maximum_kbps: 1_000,
-        },
-        (_, true) => VideoBitrateProfile {
-            target_kbps: 1_500,
-            maximum_kbps: 1_500,
-        },
+    let (target_kbps, maximum_kbps) = match (resolution, frames_per_second >= 48.0) {
+        (4320.., false) => (80_000, 160_000),
+        (4320.., true) => (120_000, 240_000),
+        (2160.., false) => (35_000, 45_000),
+        (2160.., true) => (53_000, 68_000),
+        (1440.., false) => (16_000, 16_000),
+        (1440.., true) => (24_000, 24_000),
+        (1080.., false) => (8_000, 8_000),
+        (1080.., true) => (12_000, 12_000),
+        (720.., false) => (5_000, 5_000),
+        (720.., true) => (7_500, 7_500),
+        (480.., false) => (2_500, 2_500),
+        (480.., true) => (4_000, 4_000),
+        (_, false) => (1_000, 1_000),
+        (_, true) => (1_500, 1_500),
+    };
+    VideoBitrateProfile {
+        target_kbps,
+        maximum_kbps,
     }
 }
 
@@ -1009,17 +897,14 @@ fn configure_h264_encoder(
                 "-pix_fmt",
                 "yuv420p",
             ]);
-            configure_bitrate_limits(command, bitrate, true);
         }
         H264Encoder::IntelQuickSync => {
             command.args(["-c:v", "h264_qsv", "-preset", "medium", "-pix_fmt", "nv12"]);
-            configure_bitrate_limits(command, bitrate, true);
         }
         H264Encoder::AmdAmf => {
             command.args([
                 "-c:v", "h264_amf", "-quality", "quality", "-rc", "vbr_peak", "-pix_fmt", "nv12",
             ]);
-            configure_bitrate_limits(command, bitrate, true);
         }
         H264Encoder::AppleVideoToolbox => {
             command.args([
@@ -1032,15 +917,14 @@ fn configure_h264_encoder(
                 "-allow_sw",
                 "0",
             ]);
-            configure_bitrate_limits(command, bitrate, true);
         }
         H264Encoder::CpuX264 => {
             command.args([
                 "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
             ]);
-            configure_bitrate_limits(command, bitrate, false);
         }
     }
+    configure_bitrate_limits(command, bitrate, encoder.is_gpu());
 }
 
 fn configure_bitrate_limits(
@@ -1320,12 +1204,7 @@ fn parse_ytdlp_progress(value: &str) -> Option<ProgressUpdate> {
 }
 
 fn optional_u64(value: &str) -> Option<u64> {
-    let value = value.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("NA") || value.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        value.parse().ok()
-    }
+    value.trim().parse().ok()
 }
 
 fn unique_output_path(directory: &Path, stem: &str, extension: &str) -> PathBuf {
@@ -1725,6 +1604,62 @@ mod tests {
 
         assert_eq!(selection.format_spec, "aac");
         assert!(selection.summary.contains("best AAC"));
+    }
+
+    #[test]
+    fn audio_selection_preserves_source_and_codec_preference() {
+        let mut drm = format("drm", "m4a", Some("none"), Some("aac"), None);
+        drm.has_drm = Some(true);
+        let formats = vec![
+            format("aac-first", "m4a", None, Some("aac"), None),
+            format("aac-last", "m4a", None, Some("aac"), None),
+            format("opus", "webm", None, Some("opus"), None),
+            format("combined", "mp4", Some("h264"), Some("aac"), Some(1080)),
+            drm,
+        ];
+        for (start, expected) in [(0, "aac-last"), (2, "opus"), (3, "combined")] {
+            let selection = select_audio_format(&formats[start..]).unwrap();
+            assert_eq!(selection.format_spec, expected);
+        }
+        assert!(select_audio_format(&formats[4..]).is_err());
+        assert_eq!(best_audio_only(&formats).unwrap().format_id, "aac-last");
+        assert!(best_audio_only(&formats[3..]).is_none());
+    }
+
+    #[test]
+    fn video_selection_handles_ties_unknown_dimensions_and_above_limit_sources() {
+        let formats = vec![
+            format("unknown", "mp4", Some("h264"), None, None),
+            format("1440-first", "mp4", Some("h264"), None, Some(1440)),
+            format("1440-last", "mp4", Some("h264"), None, Some(1440)),
+            format("2160", "webm", Some("av1"), None, Some(2160)),
+        ];
+        for (quality, expected) in [
+            (VideoQuality::P1080, "1440-last"),
+            (VideoQuality::P1440, "1440-last"),
+            (VideoQuality::Best, "2160"),
+        ] {
+            assert_eq!(
+                select_video_formats(&formats, quality).unwrap().format_spec,
+                expected
+            );
+            assert_eq!(
+                select_video_formats(&formats[..1], quality)
+                    .unwrap()
+                    .format_spec,
+                "unknown"
+            );
+            assert!(select_video_formats(&[], quality).is_err());
+        }
+    }
+
+    #[test]
+    fn missing_progress_numbers_remain_optional() {
+        for value in ["", "NA", "na", "None", "none", "-1", "18446744073709551616"] {
+            assert_eq!(optional_u64(value), None);
+        }
+        assert_eq!(optional_u64(" 42 "), Some(42));
+        assert_eq!(optional_u64("0"), Some(0));
     }
 
     #[test]

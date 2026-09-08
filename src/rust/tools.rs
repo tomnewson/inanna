@@ -135,12 +135,11 @@ impl UpdatePlan {
     }
 }
 
-#[derive(Clone)]
 pub struct ToolManager {
     root: PathBuf,
     platform: ToolPlatform,
     client: reqwest::Client,
-    release_cache: Arc<tokio::sync::Mutex<HashMap<String, CachedRelease>>>,
+    release_cache: tokio::sync::Mutex<HashMap<String, CachedRelease>>,
 }
 
 impl ToolManager {
@@ -162,7 +161,7 @@ impl ToolManager {
             root,
             platform,
             client,
-            release_cache: Arc::new(tokio::sync::Mutex::new(release_cache)),
+            release_cache: tokio::sync::Mutex::new(release_cache),
         })
     }
 

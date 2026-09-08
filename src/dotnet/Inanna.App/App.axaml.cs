@@ -46,12 +46,6 @@ public partial class App : Application
 
     private async Task FinishShutdownAsync(IClassicDesktopStyleApplicationLifetime desktop)
     {
-        await IgnoreBackendShutdownFailureAsync();
-        await Dispatcher.UIThread.InvokeAsync(() => desktop.Shutdown());
-    }
-
-    private async Task IgnoreBackendShutdownFailureAsync()
-    {
         try
         {
             if (_backend is not null)
@@ -62,5 +56,6 @@ public partial class App : Application
         catch (Exception)
         {
         }
+        await Dispatcher.UIThread.InvokeAsync(() => desktop.Shutdown());
     }
 }

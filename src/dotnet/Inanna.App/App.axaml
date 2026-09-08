@@ -109,15 +109,6 @@
       <Setter Property="Background" Value="{DynamicResource AppAccentStrong}" />
       <Setter Property="Foreground" Value="{DynamicResource AppPaper}" />
     </Style>
-    <Style Selector="Button.headerAction">
-      <Setter Property="MinWidth" Value="104" />
-      <Setter Property="Background" Value="{DynamicResource AppSurface}" />
-      <Setter Property="Foreground" Value="{DynamicResource AppText}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource AppText}" />
-    </Style>
-    <Style Selector="Button.headerAction:pointerover">
-      <Setter Property="Background" Value="{DynamicResource AppPanel}" />
-    </Style>
     <Style Selector="Button.panelAction">
       <Setter Property="Background" Value="{DynamicResource AppText}" />
       <Setter Property="Foreground" Value="{DynamicResource AppPaper}" />
@@ -181,11 +172,6 @@
       <Setter Property="VerticalContentAlignment" Value="Top" />
     </Style>
 
-    <Style Selector="CheckBox">
-      <Setter Property="Foreground" Value="{DynamicResource AppText}" />
-      <Setter Property="FontSize" Value="15" />
-      <Setter Property="FontWeight" Value="Normal" />
-    </Style>
 
     <Style Selector="ProgressBar">
       <Setter Property="MinHeight" Value="8" />

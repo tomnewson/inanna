@@ -202,8 +202,8 @@ public sealed class MainWindowViewModelTests
 
         await viewModel.InitializeAsync();
 
-        Assert.True(viewModel.ShowApplicationUpdatePanel);
-        Assert.Equal("0.2.0", viewModel.ApplicationUpdateVersion);
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        Assert.Equal("Version 0.2.0 is available.", viewModel.ApplicationUpdateStatus);
 
         await viewModel.InstallApplicationUpdateCommand.ExecuteAsync(null);
 
@@ -213,7 +213,7 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(100, viewModel.ApplicationUpdateProgress);
     }
 
-    private static JsonElement Json(string value) => JsonDocument.Parse(value).RootElement.Clone();
+    private static JsonElement Json(string value) => JsonSerializer.Deserialize<JsonElement>(value);
 
     private static JsonElement InitializeResult() => Json(
         $$"""{"backendVersion":"{{ApplicationVersion.Current}}","outputFolder":"C:/Videos"}""");
@@ -230,7 +230,7 @@ public sealed class PlatformServicesTests
     [Fact]
     public void BackendPipesUseBomlessUtf8()
     {
-        var startInfo = new WindowsPlatformServices(() => null).CreateBackendStartInfo();
+        var startInfo = PlatformServices.Create(() => null, new ApplicationPaths("test-data")).CreateBackendStartInfo();
 
         Assert.Equal("utf-8", startInfo.StandardInputEncoding?.WebName);
         Assert.Equal("utf-8", startInfo.StandardOutputEncoding?.WebName);
@@ -242,7 +242,7 @@ public sealed class PlatformServicesTests
     public void BackendUsesPersistentApplicationDataRoot()
     {
         var paths = new ApplicationPaths("C:/Users/test/AppData/Local/Inanna");
-        var startInfo = new WindowsPlatformServices(() => null, paths).CreateBackendStartInfo();
+        var startInfo = PlatformServices.Create(() => null, paths).CreateBackendStartInfo();
 
         Assert.Equal("--data-root", startInfo.ArgumentList[0]);
         Assert.Equal(paths.DataRoot, startInfo.ArgumentList[1]);
@@ -587,7 +587,6 @@ internal sealed class FakeApplicationUpdater : IApplicationUpdater
     public bool Applied { get; private set; }
     public int CheckCount { get; private set; }
     public bool CanUpdate => true;
-    public string CurrentVersion => ApplicationVersion.Current;
 
     public Task<ApplicationUpdate?> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {

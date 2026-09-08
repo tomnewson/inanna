@@ -37,7 +37,6 @@ internal sealed class ThrottledApplicationUpdater(
     private readonly Func<DateTimeOffset> _getUtcNow = getUtcNow ?? (() => DateTimeOffset.UtcNow);
 
     public bool CanUpdate => inner.CanUpdate;
-    public string CurrentVersion => inner.CurrentVersion;
 
     public async Task<ApplicationUpdate?> CheckForUpdatesAsync(
         CancellationToken cancellationToken = default)
@@ -100,9 +99,6 @@ internal sealed class VelopackApplicationUpdater(UpdateManager manager) : IAppli
 {
     public bool CanUpdate => manager.IsInstalled;
 
-    public string CurrentVersion =>
-        manager.CurrentVersion?.ToString() ?? ApplicationVersion.Current;
-
     public async Task<ApplicationUpdate?> CheckForUpdatesAsync(
         CancellationToken cancellationToken = default)
     {
@@ -138,7 +134,6 @@ internal sealed class UnavailableApplicationUpdater : IApplicationUpdater
     public static UnavailableApplicationUpdater Instance { get; } = new();
 
     public bool CanUpdate => false;
-    public string CurrentVersion => ApplicationVersion.Current;
 
     public Task<ApplicationUpdate?> CheckForUpdatesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult<ApplicationUpdate?>(null);
