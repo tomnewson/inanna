@@ -153,23 +153,14 @@ async fn handle_request(
     request: Request,
 ) {
     let result = match request.method.as_str() {
-        "initialize" => engine.initialize().and_then(to_value),
+        "initialize" => engine.initialize().await.and_then(to_value),
         "setOutputFolder" => {
             parse_params::<OutputFolderParams>(request.params).and_then(|params| {
                 engine.set_output_folder(PathBuf::from(params.path))?;
                 Ok(json!({ "saved": true }))
             })
         }
-        "checkTools" => {
-            let lease = match engine.reserve_operation() {
-                Ok(lease) => lease,
-                Err(error) => {
-                    send_error(&sender, &request.request_id, &error);
-                    return;
-                }
-            };
-            engine.check_tools(&lease).await.and_then(to_value)
-        }
+        "checkTools" => engine.check_tools().await.and_then(to_value),
         "installTools" => {
             let lease = match engine.reserve_operation() {
                 Ok(lease) => lease,

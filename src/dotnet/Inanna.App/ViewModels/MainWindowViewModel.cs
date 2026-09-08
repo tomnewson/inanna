@@ -34,6 +34,7 @@ public partial class MainWindowViewModel : ObservableObject
         nameof(CanBrowse),
         nameof(CanDownload),
         nameof(ShowDownloadButton),
+        nameof(ShowUpdatePanel),
         nameof(ShowCancelButton),
         nameof(IsProgressIndeterminate),
         nameof(ShowRestartButton),
@@ -53,7 +54,7 @@ public partial class MainWindowViewModel : ObservableObject
     private bool _setupRequired;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanDownload), nameof(ShowUpdatePanel))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdatePanel))]
     private bool _updateAvailable;
 
     [ObservableProperty]
@@ -100,6 +101,7 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(
         nameof(CanInstallApplicationUpdate),
+        nameof(ShowUpdatePanel),
         nameof(CanEdit),
         nameof(CanBrowse),
         nameof(CanDownload))]
@@ -137,11 +139,11 @@ public partial class MainWindowViewModel : ObservableObject
     public bool CanBrowse => !Busy && !ApplicationUpdateBusy;
     public bool HasUrl => !string.IsNullOrEmpty(Url);
     public bool CanDownload =>
-        CanEdit && !UpdateAvailable &&
+        CanEdit &&
         !string.IsNullOrWhiteSpace(Url) && !string.IsNullOrWhiteSpace(OutputFolder);
     public bool ShowDownloadButton => !Busy;
     public bool ShowCancelButton => Busy && Cancellable;
-    public bool ShowUpdatePanel => UpdateAvailable && !SetupRequired;
+    public bool ShowUpdatePanel => UpdateAvailable && !SetupRequired && !Busy && !ApplicationUpdateBusy;
     public bool ShowDetailsButton => !string.IsNullOrWhiteSpace(DetailsText);
     public bool IsProgressIndeterminate => Busy && Progress <= 0;
     public bool HasCompletedFile => Completed && !string.IsNullOrWhiteSpace(CompletedPath);
@@ -168,8 +170,10 @@ public partial class MainWindowViewModel : ObservableObject
             }
             EngineUnavailable = false;
             OutputFolder = initialized.GetProperty("outputFolder").GetString() ?? string.Empty;
-            await CheckToolsAsync();
-            await CheckForApplicationUpdateAsync();
+            ToolsReady = initialized.GetProperty("toolsReady").GetBoolean();
+            Busy = !ToolsReady;
+            StatusText = ToolsReady ? "Ready." : "Checking required tools…";
+            await Task.WhenAll(CheckToolsAsync(), CheckForApplicationUpdateAsync());
         }
         catch (Exception error)
         {
@@ -185,7 +189,6 @@ public partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        ApplicationUpdateBusy = true;
         ApplicationUpdateStatus = "Checking for updates...";
         try
         {
@@ -201,16 +204,12 @@ public partial class MainWindowViewModel : ObservableObject
             ApplicationUpdateAvailable = false;
             ApplicationUpdateStatus = $"Could not check for updates: {error.Message}";
         }
-        finally
-        {
-            ApplicationUpdateBusy = false;
-        }
     }
 
     [RelayCommand]
     private async Task InstallApplicationUpdateAsync()
     {
-        if (_applicationUpdate is null || ApplicationUpdateBusy)
+        if (_applicationUpdate is null || !CanInstallApplicationUpdate)
         {
             return;
         }
@@ -274,26 +273,42 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task CheckToolsAsync()
     {
-        SetWorking("Checking required tools…", false);
+        var setup = !ToolsReady;
+        if (setup)
+        {
+            SetWorking("Checking required tools…", false);
+        }
         SetupRequired = false;
         UpdateAvailable = false;
         CanInstallTools = false;
-        ToolsReady = false;
         try
         {
             var result = await _backend.SendAsync("checkTools");
-            Busy = false;
+            if (EngineUnavailable)
+            {
+                return;
+            }
+            if (setup)
+            {
+                Busy = false;
+            }
             ToolsReady = result.GetProperty("toolsReady").GetBoolean();
             CanInstallTools = result.GetProperty("canInstallTools").GetBoolean();
             UpdateSummary = result.GetProperty("updateSummary").GetString() ?? string.Empty;
-            StatusText = result.GetProperty("statusText").GetString() ?? string.Empty;
+            if (setup || StatusText == "Ready.")
+            {
+                StatusText = result.GetProperty("statusText").GetString() ?? string.Empty;
+            }
             var state = result.GetProperty("state").GetString();
             SetupRequired = state == "setupRequired";
             UpdateAvailable = state == "updateAvailable";
-            Failed = false;
         }
         catch (Exception error)
         {
+            if (!setup || EngineUnavailable)
+            {
+                return;
+            }
             ToolsReady = false;
             SetupRequired = true;
             CanInstallTools = false;
@@ -305,6 +320,10 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallToolsAsync()
     {
+        if (Busy || ApplicationUpdateBusy)
+        {
+            return;
+        }
         _toolsReadyBeforeOperation = ToolsReady;
         SetWorking("Preparing tool installation…", true);
         ToolsReady = false;
@@ -328,10 +347,10 @@ public partial class MainWindowViewModel : ObservableObject
     {
         UpdateAvailable = false;
         CanInstallTools = false;
-        Busy = false;
-        Cancellable = false;
-        ToolsReady = true;
-        StatusText = "Ready. The cached tools will be used.";
+        if (!Busy)
+        {
+            StatusText = "Ready. The cached tools will be used.";
+        }
     }
 
     [RelayCommand]

@@ -26,7 +26,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task UpdateStateRequiresDeferralBeforeDownload()
+    public async Task ToolUpdateDoesNotBlockDownload()
     {
         var backend = new FakeBackendClient();
         backend.Enqueue("initialize", InitializeResult());
@@ -36,7 +36,7 @@ public sealed class MainWindowViewModelTests
         viewModel.Url = "https://example.com/video";
 
         await viewModel.InitializeAsync();
-        Assert.False(viewModel.CanDownload);
+        Assert.True(viewModel.CanDownload);
 
         viewModel.DeferUpdateCommand.Execute(null);
         Assert.True(viewModel.CanDownload);
@@ -213,10 +213,83 @@ public sealed class MainWindowViewModelTests
         Assert.Equal(100, viewModel.ApplicationUpdateProgress);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CachedToolsAllowDownloadWhileBothUpdateChecksArePending(bool backendExits)
+    {
+        var toolCheck = new TaskCompletionSource<JsonElement>();
+        var appCheck = new TaskCompletionSource<ApplicationUpdate?>();
+        var backend = new FakeBackendClient();
+        backend.Enqueue("initialize", InitializeResult());
+        backend.Enqueue("checkTools", toolCheck.Task);
+        backend.Enqueue("startDownload", Json("""{"operationId":"download-1"}"""));
+        var updater = new FakeApplicationUpdater { CheckResult = appCheck.Task };
+        var viewModel = CreateViewModel(backend, updater: updater);
+        viewModel.Url = "https://example.com/video";
+
+        var initializing = viewModel.InitializeAsync();
+
+        Assert.False(initializing.IsCompleted);
+        Assert.Equal(1, updater.CheckCount);
+        Assert.True(viewModel.CanDownload);
+        Assert.False(viewModel.ApplicationUpdateBusy);
+        await viewModel.StartDownloadCommand.ExecuteAsync(null);
+        if (backendExits)
+        {
+            backend.Exit("Connection lost.");
+        }
+        var status = viewModel.StatusText;
+        toolCheck.SetResult(Json(
+            """{"state":"updateAvailable","toolsReady":true,"canInstallTools":true,"updateSummary":"New tools","statusText":"Updates are available."}"""));
+        appCheck.SetResult(new ApplicationUpdate("2.0.0", new object()));
+        await initializing;
+
+        Assert.Equal(status, viewModel.StatusText);
+        Assert.Equal(!backendExits, viewModel.Busy);
+        Assert.Equal(!backendExits, viewModel.ToolsReady);
+        Assert.False(viewModel.ShowUpdatePanel);
+        Assert.Equal(backendExits, viewModel.CanInstallApplicationUpdate);
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        if (!backendExits)
+        {
+            backend.Raise(new BackendEvent("download-1", "operationCompleted",
+                Json("""{"operationKind":"download","path":"clip.mp4"}""")));
+            Assert.True(viewModel.ShowUpdatePanel);
+            Assert.True(viewModel.CanDownload);
+        }
+    }
+
+    [Fact]
+    public async Task FirstSetupWaitsForToolsButNotForApplicationUpdateCheck()
+    {
+        var toolCheck = new TaskCompletionSource<JsonElement>();
+        var backend = new FakeBackendClient();
+        backend.Enqueue("initialize", Json(
+            $$"""{"backendVersion":"{{ApplicationVersion.Current}}","outputFolder":"C:/Videos","toolsReady":false}"""));
+        backend.Enqueue("checkTools", toolCheck.Task);
+        var updater = new FakeApplicationUpdater();
+        var viewModel = CreateViewModel(backend, updater: updater);
+        viewModel.Url = "https://example.com/video";
+
+        var initializing = viewModel.InitializeAsync();
+        Assert.False(viewModel.CanDownload);
+        Assert.True(viewModel.Busy);
+        Assert.Equal(1, updater.CheckCount);
+        toolCheck.SetResult(Json(
+            """{"state":"setupRequired","toolsReady":false,"canInstallTools":true,"updateSummary":"Install tools","statusText":""}"""));
+        await initializing;
+
+        Assert.True(viewModel.SetupRequired);
+        Assert.True(viewModel.CanInstallTools);
+        Assert.False(viewModel.CanDownload);
+        Assert.False(viewModel.Busy);
+    }
+
     private static JsonElement Json(string value) => JsonSerializer.Deserialize<JsonElement>(value);
 
     private static JsonElement InitializeResult() => Json(
-        $$"""{"backendVersion":"{{ApplicationVersion.Current}}","outputFolder":"C:/Videos"}""");
+        $$"""{"backendVersion":"{{ApplicationVersion.Current}}","outputFolder":"C:/Videos","toolsReady":true}""");
 
     private static MainWindowViewModel CreateViewModel(
         FakeBackendClient backend,
@@ -540,18 +613,20 @@ public sealed class ApplicationUpdaterTests
 
 internal sealed class FakeBackendClient : IBackendClient
 {
-    private readonly Dictionary<string, Queue<JsonElement>> _responses = [];
+    private readonly Dictionary<string, Queue<Task<JsonElement>>> _responses = [];
 
     public event Action<BackendEvent>? EventReceived;
     public event Action<string?>? BackendExited;
     public int StopCount { get; private set; }
     public JsonElement LastParameters { get; private set; }
 
-    public void Enqueue(string method, JsonElement response)
+    public void Enqueue(string method, JsonElement response) => Enqueue(method, Task.FromResult(response));
+
+    public void Enqueue(string method, Task<JsonElement> response)
     {
         if (!_responses.TryGetValue(method, out var values))
         {
-            values = new Queue<JsonElement>();
+            values = new Queue<Task<JsonElement>>();
             _responses[method] = values;
         }
         values.Enqueue(response);
@@ -565,7 +640,7 @@ internal sealed class FakeBackendClient : IBackendClient
         CancellationToken cancellationToken = default)
     {
         LastParameters = JsonSerializer.SerializeToElement(parameters);
-        return Task.FromResult(_responses[method].Dequeue());
+        return _responses[method].Dequeue();
     }
 
     public Task StopAsync()
@@ -583,6 +658,7 @@ internal sealed class FakeBackendClient : IBackendClient
 internal sealed class FakeApplicationUpdater : IApplicationUpdater
 {
     public ApplicationUpdate? NextUpdate { get; init; }
+    public Task<ApplicationUpdate?>? CheckResult { get; init; }
     public bool Downloaded { get; private set; }
     public bool Applied { get; private set; }
     public int CheckCount { get; private set; }
@@ -591,7 +667,7 @@ internal sealed class FakeApplicationUpdater : IApplicationUpdater
     public Task<ApplicationUpdate?> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
         CheckCount++;
-        return Task.FromResult(NextUpdate);
+        return CheckResult ?? Task.FromResult(NextUpdate);
     }
 
     public Task DownloadAsync(

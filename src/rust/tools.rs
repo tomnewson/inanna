@@ -185,7 +185,6 @@ impl ToolManager {
         if !self.validate_paths(&active) {
             return Ok(None);
         }
-        self.cleanup_old_toolsets(&active.directory);
         Ok(Some(active))
     }
 
@@ -412,18 +411,17 @@ impl ToolManager {
 
         let mut active = stored;
         active.directory = self.root.join(&active.directory);
+        self.cleanup_old_toolsets(&active.directory);
         Ok(active)
     }
 
     async fn release(&self, url: &str) -> Result<GithubRelease, ToolError> {
         let cached = self.release_cache.lock().await.get(url).cloned();
-        let mut request = self.client.get(url);
+        let mut request = self.client.get(url).timeout(Duration::from_secs(20));
         if let Some(etag) = cached.as_ref().and_then(|entry| entry.etag.as_ref()) {
             request = request.header(reqwest::header::IF_NONE_MATCH, etag);
         }
-        let response = tokio::time::timeout(std::time::Duration::from_secs(20), request.send())
-            .await
-            .map_err(|_| ToolError::Metadata("release request timed out".into()))??;
+        let response = request.send().await?;
         if response.status() == reqwest::StatusCode::NOT_MODIFIED {
             return cached.map(|entry| entry.release).ok_or_else(|| {
                 ToolError::Metadata("server returned 304 without cached metadata".into())

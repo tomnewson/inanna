@@ -33,6 +33,7 @@ pub struct InitializeResult {
     pub backend_version: String,
     pub platform: String,
     pub output_folder: String,
+    pub tools_ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,8 +88,10 @@ impl AppEngine {
         })
     }
 
-    pub fn initialize(&self) -> Result<InitializeResult, BackendError> {
-        self.manager()?;
+    pub async fn initialize(&self) -> Result<InitializeResult, BackendError> {
+        let cached = self.manager()?.load_active()?;
+        let tools_ready = cached.is_some();
+        *self.active_tools.write().await = cached;
         let configured = self
             .config
             .lock()
@@ -109,6 +112,7 @@ impl AppEngine {
                 .map(|value| value.id.to_owned())
                 .unwrap_or_else(|_| platform::current_platform_id()),
             output_folder: output.to_string_lossy().into_owned(),
+            tools_ready,
         })
     }
 
@@ -137,67 +141,61 @@ impl AppEngine {
         Ok(lease)
     }
 
-    pub async fn check_tools(
-        &self,
-        lease: &OperationLease,
-    ) -> Result<ToolCheckResult, BackendError> {
-        let result = async {
-            let manager = self.manager()?;
-            let cached = manager.load_active()?;
-            *self.active_tools.write().await = cached.clone();
-            let checked = manager.check_updates(cached.as_ref()).await;
-            match checked {
-                Ok(Some(plan)) if plan.has_updates() => {
-                    let first_setup = cached.is_none();
-                    let summary = plan.summary();
-                    *self.pending_update.lock().await = Some(plan);
-                    Ok(ToolCheckResult {
-                        state: if first_setup {
-                            "setupRequired"
-                        } else {
-                            "updateAvailable"
-                        }
-                        .into(),
-                        tools_ready: !first_setup,
-                        can_install_tools: true,
-                        update_summary: summary,
-                        status_text: if first_setup {
-                            String::new()
-                        } else {
-                            "Updates are available.".into()
-                        },
-                    })
-                }
-                Ok(_) => {
-                    *self.pending_update.lock().await = None;
-                    Ok(ToolCheckResult {
-                        state: "ready".into(),
-                        tools_ready: true,
-                        can_install_tools: false,
-                        update_summary: String::new(),
-                        status_text: "Ready.".into(),
-                    })
-                }
-                Err(error) if cached.is_some() => {
-                    tracing::warn!(%error, "update check failed; using cached tools");
-                    Ok(ToolCheckResult {
-                        state: "cachedWithWarning".into(),
-                        tools_ready: true,
-                        can_install_tools: false,
-                        update_summary: String::new(),
-                        status_text: "Could not check for updates. Cached tools are ready.".into(),
-                    })
-                }
-                Err(error) => Err(BackendError::ToolCheck(error.to_string())),
+    pub async fn check_tools(&self) -> Result<ToolCheckResult, BackendError> {
+        let manager = self.manager()?;
+        // Serialize tool checks and installs without occupying the download slot.
+        let mut pending = self.pending_update.lock().await;
+        let cached = self.active_tools.read().await.clone();
+        let checked = manager.check_updates(cached.as_ref()).await;
+        match checked {
+            Ok(Some(plan)) if plan.has_updates() => {
+                let first_setup = cached.is_none();
+                let summary = plan.summary();
+                *pending = Some(plan);
+                Ok(ToolCheckResult {
+                    state: if first_setup {
+                        "setupRequired"
+                    } else {
+                        "updateAvailable"
+                    }
+                    .into(),
+                    tools_ready: !first_setup,
+                    can_install_tools: true,
+                    update_summary: summary,
+                    status_text: if first_setup {
+                        String::new()
+                    } else {
+                        "Updates are available.".into()
+                    },
+                })
             }
+            Ok(_) => {
+                *pending = None;
+                Ok(ToolCheckResult {
+                    state: "ready".into(),
+                    tools_ready: true,
+                    can_install_tools: false,
+                    update_summary: String::new(),
+                    status_text: "Ready.".into(),
+                })
+            }
+            Err(error) if cached.is_some() => {
+                tracing::warn!(%error, "update check failed; using cached tools");
+                Ok(ToolCheckResult {
+                    state: "cachedWithWarning".into(),
+                    tools_ready: true,
+                    can_install_tools: false,
+                    update_summary: String::new(),
+                    status_text: "Could not check for updates. Cached tools are ready.".into(),
+                })
+            }
+            Err(error) => Err(BackendError::ToolCheck(error.to_string())),
         }
-        .await;
-        self.finish_operation(&lease.id);
-        result
     }
 
     pub async fn install_tools(self: Arc<Self>, lease: OperationLease, events: EventSink) {
         let result = self.install_tools_inner(&lease, &events).await;
+        self.finish_operation(&lease.id);
         match result {
             Ok(active) => emit(
                 &events,
@@ -213,7 +211,6 @@ impl AppEngine {
             ),
             Err(error) => emit_failure(&events, &lease.id, "toolInstall", &error),
         }
-        self.finish_operation(&lease.id);
     }
 
     async fn install_tools_inner(
@@ -222,12 +219,8 @@ impl AppEngine {
         events: &EventSink,
     ) -> Result<ActiveToolset, BackendError> {
         let manager = self.manager()?;
-        let plan = self
-            .pending_update
-            .lock()
-            .await
-            .clone()
-            .ok_or(BackendError::NoUpdatePlan)?;
+        let mut pending = self.pending_update.lock().await;
+        let plan = pending.as_ref().ok_or(BackendError::NoUpdatePlan)?;
         let active = self.active_tools.read().await.clone();
         let event_sink = Arc::clone(events);
         let operation_id = lease.id.clone();
@@ -240,12 +233,12 @@ impl AppEngine {
             );
         });
         match manager
-            .install(&plan, active.as_ref(), progress, lease.token.clone())
+            .install(plan, active.as_ref(), progress, lease.token.clone())
             .await
         {
             Ok(installed) => {
                 *self.active_tools.write().await = Some(installed.clone());
-                *self.pending_update.lock().await = None;
+                *pending = None;
                 Ok(installed)
             }
             Err(ToolError::Cancelled) => Err(BackendError::Cancelled),
@@ -273,6 +266,7 @@ impl AppEngine {
         events: EventSink,
     ) {
         let result = self.download_inner(&lease, parameters, &events).await;
+        self.finish_operation(&lease.id);
         match result {
             Ok(path) => emit(
                 &events,
@@ -291,7 +285,6 @@ impl AppEngine {
             ),
             Err(error) => emit_failure(&events, &lease.id, "download", &error),
         }
-        self.finish_operation(&lease.id);
     }
 
     async fn download_inner(
@@ -502,7 +495,60 @@ impl BackendError {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_download_url;
+    use super::*;
+
+    #[tokio::test]
+    async fn cached_handshake_is_local_and_checks_do_not_reserve_downloads() {
+        let root = tempfile::tempdir().unwrap();
+        let platform = ToolPlatform::windows_x64();
+        let directory = root.path().join("tools/current");
+        std::fs::create_dir_all(&directory).unwrap();
+        for path in [
+            &platform.layout.yt_dlp,
+            &platform.layout.ffmpeg,
+            &platform.layout.ffprobe,
+            &platform.layout.deno,
+        ] {
+            std::fs::write(directory.join(path), b"cached tool").unwrap();
+        }
+        let active = ActiveToolset {
+            id: "current".into(),
+            yt_dlp_version: "1".into(),
+            ffmpeg_version: "1".into(),
+            deno_version: "1".into(),
+            directory: "tools/current".into(),
+            platform: platform.id.into(),
+            yt_dlp_path: platform.layout.yt_dlp.clone(),
+            ffmpeg_path: platform.layout.ffmpeg.clone(),
+            ffprobe_path: platform.layout.ffprobe.clone(),
+            deno_path: platform.layout.deno.clone(),
+        };
+        config::write_json_atomic(&root.path().join("active-tools.json"), &active).unwrap();
+        for name in ["old-one", "old-two"] {
+            std::fs::create_dir_all(root.path().join("tools").join(name)).unwrap();
+        }
+        let mut engine = AppEngine::new(root.path().to_path_buf()).unwrap();
+        engine.manager = Some(ToolManager::new(root.path().to_path_buf(), platform).unwrap());
+
+        assert!(engine.initialize().await.unwrap().tools_ready);
+        assert!(engine.active_tools.read().await.is_some());
+        assert!(!root.path().join("last-update-check.txt").exists());
+        assert!(root.path().join("tools/old-one").exists());
+        assert!(root.path().join("tools/old-two").exists());
+
+        let _pending = engine.pending_update.lock().await;
+        let check = engine.check_tools();
+        tokio::pin!(check);
+        assert!(futures_util::poll!(&mut check).is_pending());
+        let download = engine.reserve_operation().unwrap();
+        assert!(engine.cancel(&download.id));
+        assert!(download.token.is_cancelled());
+        engine.finish_operation(&download.id);
+
+        std::fs::remove_file(directory.join(&active.ffmpeg_path)).unwrap();
+        assert!(!engine.initialize().await.unwrap().tools_ready);
+        assert!(engine.active_tools.read().await.is_none());
+    }
 
     #[test]
     fn adds_https_to_scheme_less_url() {
