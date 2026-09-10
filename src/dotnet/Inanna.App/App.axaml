@@ -97,6 +97,12 @@
       <Setter Property="Opacity" Value="0.62" />
     </Style>
 
+    <Style Selector="Button.engineAction">
+      <Setter Property="Height" Value="48" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="VerticalAlignment" Value="Stretch" />
+    </Style>
+
     <Style Selector="Button.primary">
       <Setter Property="Background" Value="{DynamicResource AppAccentStrong}" />
       <Setter Property="Foreground" Value="{DynamicResource AppPaper}" />

@@ -194,27 +194,29 @@
                 BorderThickness="0,1,0,0"
                 Padding="0,18,0,0">
           <StackPanel Spacing="12">
-              <Grid Height="85" ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="8">
               <Button Classes="primary"
+                      Height="85"
+                      HorizontalAlignment="Stretch"
                       IsVisible="{Binding ShowDownloadButton}"
                       Content="Download"
                       Command="{Binding StartDownloadCommand}"
-                  IsEnabled="{Binding CanDownload}" />
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-            <Button Margin="8,0,0,0"
-              IsVisible="{Binding ShowCancelButton}"
-              Content="Cancel"
-              Command="{Binding CancelCommand}" />
-            <Button Margin="8,0,0,0"
-              IsVisible="{Binding ShowDetailsButton}"
-              Content="{Binding DetailsButtonText}"
-              Command="{Binding ToggleDetailsCommand}" />
-            <Button Margin="8,0,0,0"
-              IsVisible="{Binding ShowRestartButton}"
-              Content="Restart engine"
-              Command="{Binding RestartBackendCommand}" />
-                </StackPanel>
-              </Grid>
+                      IsEnabled="{Binding CanDownload}" />
+              <UniformGrid Rows="1" ColumnSpacing="8">
+                <Button Classes="engineAction"
+                        IsVisible="{Binding ShowCancelButton}"
+                        Content="Cancel"
+                        Command="{Binding CancelCommand}" />
+                <Button Classes="engineAction"
+                        IsVisible="{Binding ShowDetailsButton}"
+                        Content="{Binding DetailsButtonText}"
+                        Command="{Binding ToggleDetailsCommand}" />
+                <Button Classes="engineAction"
+                        IsVisible="{Binding ShowRestartButton}"
+                        Content="Restart engine"
+                        Command="{Binding RestartBackendCommand}" />
+              </UniformGrid>
+            </StackPanel>
             <TextBlock Classes="status"
                        Classes.error="{Binding Failed}"
                        IsVisible="{Binding ShowStatusText}"
