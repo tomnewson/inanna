@@ -12,6 +12,21 @@ if [[ ! -x "$backend_path" ]]; then
     exit 1
 fi
 
+# A launch test alone can pass on a build host with Homebrew libraries installed.
+# The standalone macOS backend must depend only on libraries shipped with macOS.
+if [[ $(uname -s) == Darwin ]]; then
+    linked_libraries=$(otool -L "$backend_path")
+    while IFS= read -r library; do
+        case "$library" in
+            /usr/lib/*|/System/Library/*) ;;
+            *)
+                echo "backend depends on a non-system library: $library" >&2
+                exit 1
+                ;;
+        esac
+    done < <(printf '%s\n' "$linked_libraries" | sed -n '2,$s/^[[:space:]]*\(.*\) (compatibility version.*$/\1/p')
+fi
+
 data_root=$(mktemp -d "${TMPDIR:-/tmp}/inanna-smoke.XXXXXX")
 request_pipe="$data_root/requests"
 response_pipe="$data_root/responses"

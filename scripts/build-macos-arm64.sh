@@ -53,6 +53,7 @@ cargo build \
     --release \
     --target "$target_triple" \
     --locked
+"$repository_root/scripts/backend-smoke.sh" "$repository_root/target/$target_triple/release/inanna-backend"
 dotnet restore "$project" --runtime "$runtime"
 dotnet publish "$project" \
     --configuration Release \

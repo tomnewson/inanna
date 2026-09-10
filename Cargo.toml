@@ -28,7 +28,8 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
-zip = { version = "4", default-features = false, features = ["deflate", "deflate64", "lzma", "xz"] }
+# Embed liblzma so distributed binaries do not depend on the build machine's Homebrew installation.
+zip = { version = "4", default-features = false, features = ["deflate", "deflate64", "lzma-static", "xz"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

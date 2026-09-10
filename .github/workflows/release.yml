@@ -289,6 +289,7 @@ jobs:
           codesign --verify --deep --strict "$packaged_app"
           test "$(lipo -archs "$packaged_app/Contents/MacOS/yt-dlp-wrapper")" = "arm64"
           test "$(lipo -archs "$packaged_app/Contents/MacOS/inanna-backend")" = "arm64"
+          ./scripts/backend-smoke.sh "$packaged_app/Contents/MacOS/inanna-backend"
           test -x "$packaged_app/Contents/MacOS/UpdateMac"
           test -f "$packaged_app/Contents/MacOS/sq.version"
           test -f "$packaged_app/Contents/Resources/Assets.car"
