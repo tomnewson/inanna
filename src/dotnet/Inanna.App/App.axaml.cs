@@ -25,6 +25,9 @@ public partial class App : Application
             var updater = ApplicationUpdater.Create(paths);
             _backend = new BackendClient(platform);
             var viewModel = new MainWindowViewModel(_backend, platform, updater);
+            var updateTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(30) };
+            updateTimer.Tick += async (_, _) => await viewModel.CheckForApplicationUpdateAsync();
+            updateTimer.Start();
             window = new MainWindow { DataContext = viewModel };
             desktop.MainWindow = window;
             window.Closing += (_, eventArgs) =>
@@ -35,6 +38,7 @@ public partial class App : Application
                 }
 
                 _shutdownStarted = true;
+                updateTimer.Stop();
                 eventArgs.Cancel = true;
                 window.Hide();
                 _ = FinishShutdownAsync(desktop);

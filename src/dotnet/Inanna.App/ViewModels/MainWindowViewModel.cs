@@ -15,6 +15,8 @@ public partial class MainWindowViewModel : ObservableObject
     private string? _activeOperationId;
     private bool _toolsReadyBeforeOperation;
     private ApplicationUpdate? _applicationUpdate;
+    private bool _checkingApplicationUpdate;
+    private string? _deferredApplicationVersion;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanDownload))]
@@ -155,6 +157,7 @@ public partial class MainWindowViewModel : ObservableObject
         ApplicationUpdateAvailable && !ApplicationUpdateBusy && !Busy;
     public async Task InitializeAsync()
     {
+        var applicationUpdateCheck = CheckForApplicationUpdateAsync();
         try
         {
             Busy = true;
@@ -173,36 +176,55 @@ public partial class MainWindowViewModel : ObservableObject
             ToolsReady = initialized.GetProperty("toolsReady").GetBoolean();
             Busy = !ToolsReady;
             StatusText = ToolsReady ? "Ready." : "Checking required tools…";
-            await Task.WhenAll(CheckToolsAsync(), CheckForApplicationUpdateAsync());
+            await CheckToolsAsync();
         }
         catch (Exception error)
         {
             ApplyFailure("The download engine could not be started.", error);
             EngineUnavailable = true;
         }
+        await applicationUpdateCheck;
     }
 
-    private async Task CheckForApplicationUpdateAsync()
+    internal async Task CheckForApplicationUpdateAsync()
     {
-        if (!_applicationUpdater.CanUpdate || ApplicationUpdateBusy)
+        if (!_applicationUpdater.CanUpdate || ApplicationUpdateBusy || _checkingApplicationUpdate)
         {
             return;
         }
 
-        ApplicationUpdateStatus = "Checking for updates...";
+        _checkingApplicationUpdate = true;
         try
         {
-            _applicationUpdate = await _applicationUpdater.CheckForUpdatesAsync();
-            ApplicationUpdateAvailable = _applicationUpdate is not null;
-            ApplicationUpdateStatus = _applicationUpdate is null
-                ? "The application is up to date."
-                : $"Version {_applicationUpdate.Version} is available.";
+            var update = await _applicationUpdater.CheckForUpdatesAsync();
+            if (ApplicationUpdateBusy)
+            {
+                return;
+            }
+            // A throttled check can return null. Keep an already offered update usable.
+            if (update is not null)
+            {
+                _applicationUpdate = update;
+                ApplicationUpdateAvailable = update.Version != _deferredApplicationVersion;
+                ApplicationUpdateStatus = ApplicationUpdateAvailable
+                    ? $"Version {update.Version} is available."
+                    : "Update deferred until the next launch.";
+            }
+            else if (_applicationUpdate is null)
+            {
+                ApplicationUpdateStatus = "The application is up to date.";
+            }
         }
         catch (Exception error)
         {
-            _applicationUpdate = null;
-            ApplicationUpdateAvailable = false;
-            ApplicationUpdateStatus = $"Could not check for updates: {error.Message}";
+            if (_applicationUpdate is null)
+            {
+                ApplicationUpdateStatus = $"Could not check for updates: {error.Message}";
+            }
+        }
+        finally
+        {
+            _checkingApplicationUpdate = false;
         }
     }
 
@@ -236,6 +258,7 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void DeferApplicationUpdate()
     {
+        _deferredApplicationVersion = _applicationUpdate?.Version;
         ApplicationUpdateAvailable = false;
         ApplicationUpdateStatus = "Update deferred until the next launch.";
     }

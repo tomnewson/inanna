@@ -286,6 +286,103 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.Busy);
     }
 
+    [Fact]
+    public async Task StartupOffersApplicationUpdateEvenWhenRustFails()
+    {
+        var backend = new FakeBackendClient();
+        backend.Enqueue("initialize", Task.FromException<JsonElement>(new IOException("Rust exited with code 134.")));
+        var updater = new FakeApplicationUpdater { NextUpdate = new ApplicationUpdate("2.0.0", new object()) };
+        var viewModel = CreateViewModel(backend, updater: updater);
+
+        await viewModel.InitializeAsync();
+
+        Assert.True(viewModel.EngineUnavailable);
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        Assert.True(viewModel.CanInstallApplicationUpdate);
+        Assert.Equal(1, updater.CheckCount);
+    }
+
+    [Fact]
+    public async Task StartupChecksApplicationUpdatesBeforeRustHandshakeCompletes()
+    {
+        var handshake = new TaskCompletionSource<JsonElement>();
+        var backend = new FakeBackendClient();
+        backend.Enqueue("initialize", handshake.Task);
+        var updater = new FakeApplicationUpdater { NextUpdate = new ApplicationUpdate("2.0.0", new object()) };
+        var viewModel = CreateViewModel(backend, updater: updater);
+
+        var initializing = viewModel.InitializeAsync();
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        Assert.False(initializing.IsCompleted);
+        handshake.SetException(new IOException("Rust failed."));
+        await initializing;
+    }
+
+    [Fact]
+    public async Task PassiveChecksFindUpdatesAndRespectDeferral()
+    {
+        var updater = new FakeApplicationUpdater();
+        var viewModel = CreateViewModel(new FakeBackendClient(), updater: updater);
+        viewModel.Busy = false;
+        viewModel.EngineUnavailable = true;
+        viewModel.StatusText = "Engine unavailable.";
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.False(viewModel.ApplicationUpdateAvailable);
+
+        updater.NextUpdate = new ApplicationUpdate("2.0.0", new object());
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.True(viewModel.CanInstallApplicationUpdate);
+        Assert.Equal("Engine unavailable.", viewModel.StatusText);
+        viewModel.DeferApplicationUpdateCommand.Execute(null);
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.False(viewModel.ApplicationUpdateAvailable);
+
+        updater.NextUpdate = new ApplicationUpdate("2.0.1", new object());
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        Assert.Equal("Version 2.0.1 is available.", viewModel.ApplicationUpdateStatus);
+    }
+
+    [Fact]
+    public async Task PassiveChecksDoNotOverlapOrRunDuringInstallation()
+    {
+        var pending = new TaskCompletionSource<ApplicationUpdate?>();
+        var updater = new FakeApplicationUpdater { CheckResult = pending.Task };
+        var viewModel = CreateViewModel(new FakeBackendClient(), updater: updater);
+        var first = viewModel.CheckForApplicationUpdateAsync();
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.Equal(1, updater.CheckCount);
+        viewModel.ApplicationUpdateBusy = true;
+        pending.SetResult(new ApplicationUpdate("2.0.0", new object()));
+        await first;
+        Assert.False(viewModel.ApplicationUpdateAvailable);
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.Equal(1, updater.CheckCount);
+        viewModel.ApplicationUpdateBusy = false;
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.Equal(2, updater.CheckCount);
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+    }
+
+    [Fact]
+    public async Task PassiveCheckFailureOrThrottlePreservesAnAvailableUpdate()
+    {
+        var updater = new FakeApplicationUpdater { NextUpdate = new ApplicationUpdate("2.0.0", new object()) };
+        var viewModel = CreateViewModel(new FakeBackendClient(), updater: updater);
+        await viewModel.CheckForApplicationUpdateAsync();
+        updater.NextUpdate = null;
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        updater.CheckResult = Task.FromException<ApplicationUpdate?>(new IOException("Offline"));
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.True(viewModel.ApplicationUpdateAvailable);
+        Assert.Equal("Version 2.0.0 is available.", viewModel.ApplicationUpdateStatus);
+        updater.CheckResult = null;
+        updater.NextUpdate = new ApplicationUpdate("2.0.1", new object());
+        await viewModel.CheckForApplicationUpdateAsync();
+        Assert.Equal("Version 2.0.1 is available.", viewModel.ApplicationUpdateStatus);
+    }
+
     private static JsonElement Json(string value) => JsonSerializer.Deserialize<JsonElement>(value);
 
     private static JsonElement InitializeResult() => Json(
@@ -657,8 +754,8 @@ internal sealed class FakeBackendClient : IBackendClient
 
 internal sealed class FakeApplicationUpdater : IApplicationUpdater
 {
-    public ApplicationUpdate? NextUpdate { get; init; }
-    public Task<ApplicationUpdate?>? CheckResult { get; init; }
+    public ApplicationUpdate? NextUpdate { get; set; }
+    public Task<ApplicationUpdate?>? CheckResult { get; set; }
     public bool Downloaded { get; private set; }
     public bool Applied { get; private set; }
     public int CheckCount { get; private set; }
