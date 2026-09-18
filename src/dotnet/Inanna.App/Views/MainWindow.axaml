@@ -112,19 +112,50 @@
           </StackPanel>
         </Border>
 
-        <TextBox Height="48"
+        <TextBox x:Name="UrlInput" Height="48"
                   Text="{Binding Url}"
                   PlaceholderText="Paste a video URL…"
                   IsEnabled="{Binding CanEdit}"
                   AutomationProperties.Name="URL">
           <TextBox.InnerRightContent>
-            <Button Classes="clearInput"
-                    Content="✕"
-                    Command="{Binding ClearSearchCommand}"
-                    IsVisible="{Binding HasUrl}"
-                  Background="Transparent"
-                  BorderThickness="0"
-                    AutomationProperties.Name="Clear URL" />
+            <Grid>
+              <Button Classes="clearInput"
+                      Command="{Binding ClearSearchCommand}"
+                      ContentTemplate="{x:Null}"
+                      HorizontalContentAlignment="Center"
+                      VerticalContentAlignment="Center"
+                      IsVisible="{Binding HasUrl}"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      AutomationProperties.Name="Clear URL">
+                <!-- Geometry from assets/icons/x.svg. -->
+                <Canvas Width="24" Height="24">
+                  <Path Data="M18 6L6 18M6 6L18 18"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeThickness="2" StrokeLineCap="Round" StrokeJoin="Round" />
+                </Canvas>
+              </Button>
+              <Button Classes="clearInput"
+                      Click="OnPasteUrlClick"
+                      ContentTemplate="{x:Null}"
+                      HorizontalContentAlignment="Center"
+                      VerticalContentAlignment="Center"
+                      IsVisible="{Binding !HasUrl}"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      AutomationProperties.Name="Paste URL from clipboard">
+                <!-- Geometry from assets/icons/clipboard.svg, including its rounded clip. -->
+                <Canvas Width="24" Height="24">
+                  <Path Data="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeThickness="2" StrokeLineCap="Round" StrokeJoin="Round" />
+                  <Rectangle Canvas.Left="8" Canvas.Top="2" Width="8" Height="4"
+                             RadiusX="1" RadiusY="1"
+                             Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                             StrokeThickness="2" />
+                </Canvas>
+              </Button>
+            </Grid>
           </TextBox.InnerRightContent>
         </TextBox>
 

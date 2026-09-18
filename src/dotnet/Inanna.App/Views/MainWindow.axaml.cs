@@ -1,4 +1,6 @@
 using Avalonia.Controls;
+using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Inanna.ViewModels;
@@ -31,5 +33,30 @@ public partial class MainWindow : Window
         Dispatcher.UIThread.Post(
             () => _ = viewModel.InitializeAsync(),
             DispatcherPriority.Loaded);
+    }
+
+    private async void OnPasteUrlClick(object? sender, RoutedEventArgs eventArgs)
+    {
+        if (DataContext is not MainWindowViewModel viewModel ||
+            !viewModel.CanEdit || viewModel.HasUrl || Clipboard is not { } clipboard)
+        {
+            return;
+        }
+
+        try
+        {
+            var text = await clipboard.TryGetTextAsync();
+            // A clipboard read can finish after the user starts typing or downloading.
+            if (!string.IsNullOrEmpty(text) && viewModel.CanEdit && !viewModel.HasUrl)
+            {
+                viewModel.Url = text;
+                UrlInput.Focus();
+                UrlInput.CaretIndex = text.Length;
+            }
+        }
+        catch (Exception)
+        {
+            viewModel.StatusText = "Could not read the clipboard. Try pasting the URL manually.";
+        }
     }
 }

@@ -170,7 +170,6 @@
     </Style>
     <Style Selector="TextBox:focus">
       <Setter Property="BorderBrush" Value="{DynamicResource AppAccentStrong}" />
-      <Setter Property="BorderThickness" Value="3" />
     </Style>
     <Style Selector="TextBox.details">
       <Setter Property="MinHeight" Value="96" />
