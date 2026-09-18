@@ -70,6 +70,45 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("C:/Videos/café.mp4", platform.RevealedPath);
     }
 
+    [Fact]
+    public async Task AutomaticRetryShowsWaitingStateAndThenResumesProgress()
+    {
+        var backend = new FakeBackendClient();
+        backend.Enqueue("startDownload", Json("""{"operationId":"retry-1"}"""));
+        var viewModel = CreateViewModel(backend);
+        viewModel.Url = "https://www.youtube.com/watch?v=test";
+        viewModel.OutputFolder = "C:/Videos";
+        viewModel.ToolsReady = true;
+        viewModel.Busy = false;
+        await viewModel.StartDownloadCommand.ExecuteAsync(null);
+        viewModel.Progress = 65;
+
+        backend.Raise(new BackendEvent("retry-1", "operationProgress", Json(
+            """{"operationKind":"download","phase":"retrying","fraction":0,"message":"YouTube temporarily blocked the request. Retrying now (retry 1 of 3)…"}""")));
+
+        Assert.True(viewModel.Busy);
+        Assert.True(viewModel.IsProgressIndeterminate);
+        Assert.True(viewModel.ShowCancelButton);
+        Assert.True(viewModel.ShowStatusText);
+        Assert.False(viewModel.Failed);
+        Assert.False(viewModel.CanDownload);
+        Assert.Contains("retry 1 of 3", viewModel.StatusText);
+
+        backend.Raise(new BackendEvent("retry-1", "operationProgress", Json(
+            """{"operationKind":"download","phase":"downloading","fraction":0.2,"message":"Downloading…"}""")));
+        Assert.Equal(20, viewModel.Progress);
+        Assert.False(viewModel.IsProgressIndeterminate);
+
+        backend.Raise(new BackendEvent("retry-1", "operationFailed", Json(
+            """{"operationKind":"download","error":{"code":"downloadRetriesExhausted","message":"The download failed after 3 automatic retries. Try again later.","details":"HTTP Error 403: Forbidden"}}""")));
+        Assert.False(viewModel.Busy);
+        Assert.True(viewModel.Failed);
+        Assert.True(viewModel.CanDownload);
+        Assert.True(viewModel.ShowDetailsButton);
+        Assert.Contains("3 automatic retries", viewModel.StatusText);
+        Assert.Contains("403", viewModel.DetailsText);
+    }
+
     [Theory]
     [InlineData(0, "audioOnly", "best")]
     [InlineData(1, "video", "p1080")]

@@ -17,6 +17,19 @@ It supports downloads from any video hosting platform that yt-dlp supports, incl
 - Pinterest
 - Many more! See all [here](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
 
+## Automatic download retries
+
+Inanna retries a failed download up to **three times after the initial attempt**. Each retry checks formats again to refresh media URLs, while retaining staged partial downloads for yt-dlp to resume when possible.
+
+- YouTube HTTP 403 and “Sign in to confirm you’re not a bot”: retry immediately, then wait 10 and 20 seconds.
+- HTTP 429: retry immediately, then wait 60 and 120 seconds.
+- HTTP 408, 500, 502, 503, 504 and explicit connection timeout/reset/abort, remote disconnect, or temporary DNS failures: retry immediately, then wait 10 and 20 seconds.
+- Other failures (including private/deleted/age-restricted videos, missing formats, disk errors and conversion failures) are not automatically retried.
+
+These rules inspect the final yt-dlp error diagnostic, since its general failure exit status does not identify the cause. yt-dlp’s own request/fragment retries still apply within each attempt. Persistent blocks may require action beyond retrying; see the [yt-dlp FAQ](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#http-error-429-too-many-requests-or-402-payment-required).
+
+The first retry shows “Retrying now (retry 1 of 3)…”. During subsequent waits, the existing progress bar becomes indeterminate and the status shows, for example, “YouTube temporarily blocked the request. Retrying in 10s (retry 2 of 3)…”, counting down each second. Cancel remains available. Only the final failure shows an error and diagnostic details: “The download failed after 3 automatic retries. Try again later.”
+
 ## Video Conversion
 For video conversion, FFmpeg reads the source dimensions and average frame rate and applies the [YouTube SDR encoding guidance](https://support.google.com/youtube/answer/1722171). GPU encoders use the target and maximum; the CRF-based CPU fallback uses the same maximum. High frame rate means 48 fps or greater. Values are target/maximum Mbps:
 

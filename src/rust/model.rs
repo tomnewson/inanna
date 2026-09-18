@@ -36,6 +36,7 @@ pub struct DownloadRequest {
 #[serde(rename_all = "camelCase")]
 pub enum JobPhase {
     Preparing,
+    Retrying,
     Downloading,
     Inspecting,
     Remuxing,

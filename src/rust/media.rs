@@ -33,6 +33,8 @@ pub enum MediaError {
     Cancelled,
     #[error("yt-dlp failed: {0}")]
     YtDlp(String),
+    #[error("automatic retries exhausted: {0}")]
+    RetriesExhausted(Box<MediaError>),
     #[error("FFmpeg failed: {0}")]
     Ffmpeg(String),
     #[error("yt-dlp did not report the downloaded file")]
@@ -153,7 +155,10 @@ pub async fn download_media(
         .join(format!(".inanna-{}", Uuid::new_v4()));
     fs::create_dir_all(&staging).await?;
 
-    let result = run_pipeline(&tools, &request, &staging, &cancel, &progress).await;
+    let result = retry_download(&request.url, &cancel, &progress, || {
+        run_pipeline(&tools, &request, &staging, &cancel, &progress)
+    })
+    .await;
     let _ = fs::remove_dir_all(&staging).await;
     match &result {
         Err(MediaError::Cancelled) => (progress)(ProgressUpdate::message(
@@ -167,6 +172,122 @@ pub async fn download_media(
         Ok(_) => {}
     }
     result
+}
+
+const MAX_DOWNLOAD_RETRIES: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryReason {
+    Blocked,
+    RateLimited,
+    Network,
+}
+
+fn retry_reason(url: &str, error: &MediaError) -> Option<RetryReason> {
+    let MediaError::YtDlp(details) = error else {
+        return None;
+    };
+    // Exit code 1 covers permanent and transient failures alike. Use the final
+    // error, not earlier warnings from an extractor that subsequently recovered.
+    let details = details.to_lowercase().replace('’', "'");
+    let error = details
+        .lines()
+        .rev()
+        .find(|line| line.starts_with("error:"))?;
+    let youtube = url::Url::parse(url).ok().is_some_and(|url| {
+        url.host_str().is_some_and(|host| {
+            host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com")
+        })
+    });
+    let http_code = error.split("http error ").nth(1).and_then(|tail| {
+        tail.split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse::<u16>()
+            .ok()
+    });
+    match http_code {
+        Some(429) => return Some(RetryReason::RateLimited),
+        Some(403) if youtube => return Some(RetryReason::Blocked),
+        Some(408 | 500 | 502 | 503 | 504) => return Some(RetryReason::Network),
+        Some(_) => return None,
+        None => {}
+    }
+    if youtube && error.contains("sign in to confirm you're not a bot") {
+        return Some(RetryReason::Blocked);
+    }
+    [
+        "timed out",
+        "connection reset",
+        "connection aborted",
+        "remote end closed connection",
+        "temporary failure in name resolution",
+    ]
+    .iter()
+    .any(|message| error.contains(message))
+    .then_some(RetryReason::Network)
+}
+
+async fn retry_download<T, F, Fut>(
+    url: &str,
+    cancel: &CancellationToken,
+    progress: &MediaProgress,
+    mut attempt: F,
+) -> Result<T, MediaError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, MediaError>>,
+{
+    for retries in 0..=MAX_DOWNLOAD_RETRIES {
+        if cancel.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
+        let error = match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        if cancel.is_cancelled() {
+            return Err(MediaError::Cancelled);
+        }
+        let Some(reason) = retry_reason(url, &error) else {
+            return Err(error);
+        };
+        if retries == MAX_DOWNLOAD_RETRIES {
+            return Err(MediaError::RetriesExhausted(Box::new(error)));
+        }
+        let (base_delay, message) = match reason {
+            RetryReason::Blocked => (5, "YouTube temporarily blocked the request."),
+            RetryReason::RateLimited => (30, "The site is limiting requests."),
+            RetryReason::Network => (5, "The connection was interrupted."),
+        };
+        if retries == 0 {
+            let mut update = ProgressUpdate::message(
+                JobPhase::Retrying,
+                format!("{message} Retrying now (retry 1 of {MAX_DOWNLOAD_RETRIES})…"),
+            );
+            update.fraction = Some(0.0);
+            progress(update);
+            continue;
+        }
+        for remaining in (1..=base_delay * (1 << retries)).rev() {
+            let mut update = ProgressUpdate::message(
+                JobPhase::Retrying,
+                format!(
+                    "{message} Retrying in {remaining}s (retry {} of {MAX_DOWNLOAD_RETRIES})…",
+                    retries + 1
+                ),
+            );
+            // Clear the previous attempt's percentage; the existing UI shows an
+            // indeterminate bar at zero and keeps the same Cancel action active.
+            update.fraction = Some(0.0);
+            progress(update);
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(MediaError::Cancelled),
+                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+            }
+        }
+    }
+    unreachable!("the last attempt always returns")
 }
 
 async fn run_pipeline(
@@ -1248,6 +1369,205 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const YOUTUBE_URL: &str = "https://www.youtube.com/watch?v=test";
+
+    #[test]
+    fn classifies_only_explicit_transient_failures() {
+        for code in [403, 408, 429, 500, 502, 503, 504] {
+            assert!(
+                retry_reason(
+                    YOUTUBE_URL,
+                    &MediaError::YtDlp(format!(
+                        "ERROR: unable to download video data: HTTP Error {code}: failure"
+                    ))
+                )
+                .is_some(),
+                "{code}"
+            );
+        }
+        for message in [
+            "Sign in to confirm you're not a bot",
+            "Sign in to confirm you’re not a bot",
+            "The read operation timed out",
+            "Connection reset by peer",
+            "Remote end closed connection without response",
+            "Temporary failure in name resolution",
+        ] {
+            assert!(
+                retry_reason(YOUTUBE_URL, &MediaError::YtDlp(format!("ERROR: {message}")))
+                    .is_some()
+            );
+        }
+        for message in [
+            "HTTP Error 400: Bad Request",
+            "HTTP Error 401: Unauthorized",
+            "HTTP Error 402: Payment Required",
+            "HTTP Error 404: Not Found",
+            "HTTP Error 410: Gone",
+            "HTTP Error 501: Not Implemented",
+            "Private video",
+            "Video unavailable",
+            "Sign in to confirm your age",
+            "Requested format is not available",
+            "Permission denied",
+            "No space left on device",
+            "WARNING: HTTP Error 403: Forbidden\nERROR: Private video",
+            "WARNING: HTTP Error 429: Too Many Requests",
+            "exit status: 1",
+        ] {
+            let details = if message.starts_with("WARNING:") || message.starts_with("exit") {
+                message.to_owned()
+            } else {
+                format!("ERROR: {message}")
+            };
+            assert_eq!(
+                retry_reason(YOUTUBE_URL, &MediaError::YtDlp(details)),
+                None,
+                "{message}"
+            );
+        }
+        for url in [
+            "https://example.com/video",
+            "https://youtube.com.example.com/video",
+        ] {
+            assert_eq!(
+                retry_reason(
+                    url,
+                    &MediaError::YtDlp("ERROR: HTTP Error 403: Forbidden".into())
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            retry_reason(
+                YOUTUBE_URL,
+                &MediaError::Ffmpeg("ERROR: HTTP Error 503".into())
+            ),
+            None
+        );
+        assert_eq!(retry_reason(YOUTUBE_URL, &MediaError::Cancelled), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retries_three_times_then_preserves_final_error() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let sink = updates.clone();
+        let progress: MediaProgress = Arc::new(move |update| sink.lock().unwrap().push(update));
+        let mut attempts = 0;
+        let started = tokio::time::Instant::now();
+        let result = retry_download(YOUTUBE_URL, &CancellationToken::new(), &progress, || {
+            attempts += 1;
+            std::future::ready(Err::<(), _>(MediaError::YtDlp(
+                "ERROR: HTTP Error 403: Forbidden".into(),
+            )))
+        })
+        .await;
+        assert_eq!(attempts, 4);
+        assert_eq!(started.elapsed().as_secs(), 30);
+        assert!(matches!(result, Err(MediaError::RetriesExhausted(_))));
+        let updates = updates.lock().unwrap();
+        assert!(updates[0].message.contains("Retrying now (retry 1 of 3)"));
+        assert!(
+            updates
+                .last()
+                .unwrap()
+                .message
+                .contains("1s (retry 3 of 3)")
+        );
+        assert!(
+            updates
+                .iter()
+                .all(|u| u.phase == JobPhase::Retrying && u.fraction == Some(0.0))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_retry_is_immediate() {
+        let progress: MediaProgress = Arc::new(|_| {});
+        for code in [403, 429, 503] {
+            let started = tokio::time::Instant::now();
+            let mut attempts = 0;
+            retry_download(YOUTUBE_URL, &CancellationToken::new(), &progress, || {
+                attempts += 1;
+                std::future::ready(if attempts == 1 {
+                    Err(MediaError::YtDlp(format!(
+                        "ERROR: HTTP Error {code}: failure"
+                    )))
+                } else {
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(attempts, 2);
+            assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stops_after_success_and_backs_off_rate_limits() {
+        let progress: MediaProgress = Arc::new(|_| {});
+        let mut attempts = 0;
+        let started = tokio::time::Instant::now();
+        let result = retry_download(YOUTUBE_URL, &CancellationToken::new(), &progress, || {
+            attempts += 1;
+            std::future::ready(if attempts == 3 {
+                Ok("saved")
+            } else {
+                Err(MediaError::YtDlp(
+                    "ERROR: HTTP Error 429: Too Many Requests".into(),
+                ))
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result, "saved");
+        assert_eq!(attempts, 3);
+        assert_eq!(started.elapsed().as_secs(), 60);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_backoff_prevents_another_attempt() {
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let progress: MediaProgress = Arc::new(move |update| {
+            if update.message.contains("retry 2 of 3") {
+                token.cancel();
+            }
+        });
+        let mut attempts = 0;
+        let result = retry_download(YOUTUBE_URL, &cancel, &progress, || {
+            attempts += 1;
+            std::future::ready(Err::<(), _>(MediaError::YtDlp(
+                "ERROR: HTTP Error 403: Forbidden".into(),
+            )))
+        })
+        .await;
+        assert!(matches!(result, Err(MediaError::Cancelled)));
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn permanent_errors_stop_immediately_even_after_a_transient_error() {
+        let progress: MediaProgress = Arc::new(|_| {});
+        for transient_first in [false, true] {
+            let mut attempts = 0;
+            let result = retry_download(YOUTUBE_URL, &CancellationToken::new(), &progress, || {
+                attempts += 1;
+                std::future::ready(Err::<(), _>(MediaError::YtDlp(
+                    if transient_first && attempts == 1 {
+                        "ERROR: HTTP Error 403: Forbidden".into()
+                    } else {
+                        "ERROR: Private video".into()
+                    },
+                )))
+            })
+            .await;
+            assert_eq!(attempts, if transient_first { 2 } else { 1 });
+            assert!(matches!(result, Err(MediaError::YtDlp(_))));
+        }
+    }
 
     fn format(
         id: &str,

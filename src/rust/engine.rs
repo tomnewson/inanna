@@ -479,6 +479,11 @@ impl BackendError {
                 "The tool operation failed.".into(),
                 Some(error.to_string()),
             ),
+            Self::Media(error @ MediaError::RetriesExhausted(_)) => (
+                "downloadRetriesExhausted",
+                "The download failed after 3 automatic retries. Try again later.".into(),
+                Some(error.to_string()),
+            ),
             Self::Media(error) => (
                 "downloadFailed",
                 "The download failed.".into(),
