@@ -304,7 +304,22 @@ async fn run_pipeline(
         |updates| async move { inspect_formats(tools, request, cancel, &updates).await },
     )
     .await?;
-    let selection = select_formats(&media_info.formats, request.mode, request.video_quality)?;
+    let av1_supported = if request.mode == DownloadMode::Video
+        && media_info
+            .formats
+            .iter()
+            .any(|format| is_av1_codec(format.vcodec.as_deref()))
+    {
+        supports_software_av1(&tools.ffmpeg(), cancel).await?
+    } else {
+        true
+    };
+    let selection = select_formats(
+        &media_info.formats,
+        request.mode,
+        request.video_quality,
+        av1_supported,
+    )?;
     let downloaded = with_preparation_activity(
         ProgressUpdate::message(
             JobPhase::Preparing,
@@ -554,9 +569,10 @@ fn select_formats(
     formats: &[AvailableFormat],
     mode: DownloadMode,
     video_quality: VideoQuality,
+    av1_supported: bool,
 ) -> Result<FormatSelection, MediaError> {
     match mode {
-        DownloadMode::Video => select_video_formats(formats, video_quality),
+        DownloadMode::Video => select_video_formats(formats, video_quality, av1_supported),
         DownloadMode::AudioOnly => select_audio_format(formats),
     }
 }
@@ -564,6 +580,7 @@ fn select_formats(
 fn select_video_formats(
     formats: &[AvailableFormat],
     video_quality: VideoQuality,
+    av1_supported: bool,
 ) -> Result<FormatSelection, MediaError> {
     let video_formats = formats
         .iter()
@@ -579,11 +596,17 @@ fn select_video_formats(
         .filter(|format| {
             selected_resolution.is_none() || format_resolution(format) == selected_resolution
         })
+        // Preserve the requested resolution rather than silently falling back to 1080p.
+        .filter(|format| av1_supported || !is_av1_codec(format.vcodec.as_deref()))
         // yt-dlp orders formats from worst to best; max_by_key keeps the last tie.
         .max_by_key(|format| is_h264_codec(format.vcodec.as_deref()))
         .ok_or_else(|| {
             MediaError::NoSuitableFormat(
-                "no video stream was reported at the selected resolution".into(),
+                if !av1_supported {
+                    "the selected resolution requires AV1 decoding, but this FFmpeg build has no software AV1 decoder. Choose a lower resolution or use an FFmpeg build with libdav1d support".into()
+                } else {
+                    "no video stream was reported at the selected resolution".into()
+                },
             )
         })?;
 
@@ -695,6 +718,47 @@ fn has_audio(format: &AvailableFormat) -> bool {
 
 fn codec_is_present(codec: Option<&str>) -> bool {
     codec.is_some_and(|codec| !codec.is_empty() && !codec.eq_ignore_ascii_case("none"))
+}
+
+fn is_av1_codec(codec: Option<&str>) -> bool {
+    codec.is_some_and(|codec| {
+        let codec = codec.to_ascii_lowercase();
+        codec == "av1" || codec.starts_with("av01")
+    })
+}
+
+// The native `av1` decoder is hardware-only. Listing it does not mean the
+// software decoding path used by our conversion commands can read AV1.
+fn has_software_av1_decoder(listing: &str) -> bool {
+    listing.lines().any(|line| {
+        let mut columns = line.split_whitespace();
+        columns.next().is_some_and(|flags| flags.starts_with('V'))
+            && matches!(columns.next(), Some("libdav1d" | "libaom-av1"))
+    })
+}
+
+async fn supports_software_av1(
+    ffmpeg: &Path,
+    cancel: &CancellationToken,
+) -> Result<bool, MediaError> {
+    let mut command = Command::new(ffmpeg);
+    command.args(["-hide_banner", "-decoders"]);
+    configure_child(&mut command, ffmpeg.parent().unwrap_or(Path::new(".")));
+    let supported = Arc::new(Mutex::new(false));
+    let sink = Arc::clone(&supported);
+    let stdout_handler = Arc::new(move |line: String| {
+        if has_software_av1_decoder(&line) {
+            *sink.lock().expect("decoder mutex poisoned") = true;
+        }
+    });
+    let status = run_command(command, cancel, stdout_handler, Arc::new(|_: String| {})).await?;
+    if !status.success() {
+        return Err(MediaError::Ffmpeg(format!(
+            "could not inspect available decoders: {status}"
+        )));
+    }
+    let result = *supported.lock().expect("decoder mutex poisoned");
+    Ok(result)
 }
 
 fn is_h264_codec(codec: Option<&str>) -> bool {
@@ -2078,11 +2142,65 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             format("opus", "webm", Some("none"), Some("opus"), None),
         ];
 
-        let selection = select_formats(&formats, DownloadMode::Video, VideoQuality::Best).unwrap();
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, true).unwrap();
 
         assert_eq!(selection.format_spec, "h264+aac");
         assert!(selection.summary.contains("2160p H.264/AAC"));
         assert!(selection.summary.contains("remuxing"));
+    }
+
+    #[test]
+    fn distinguishes_software_av1_decoders_from_hardware_only_decoders() {
+        assert!(!has_software_av1_decoder(
+            " V....D av1 Alliance for Open Media AV1\n V..... av1_cuvid Nvidia"
+        ));
+        assert!(has_software_av1_decoder(
+            " V..... libdav1d dav1d AV1 decoder"
+        ));
+        assert!(has_software_av1_decoder(" V....D libaom-av1 libaom AV1"));
+        assert!(!has_software_av1_decoder(
+            " A....D wmav1 Windows Media Audio"
+        ));
+    }
+
+    #[test]
+    fn avoids_unsupported_av1_without_losing_4k_resolution() {
+        let formats = vec![
+            format("h264", "mp4", Some("avc1.640028"), Some("none"), Some(1080)),
+            format("vp9", "webm", Some("vp9"), Some("none"), Some(2160)),
+            format(
+                "av1",
+                "mp4",
+                Some("av01.0.13M.08"),
+                Some("none"),
+                Some(2160),
+            ),
+            format("aac", "m4a", Some("none"), Some("mp4a.40.2"), None),
+        ];
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, false).unwrap();
+        assert_eq!(selection.format_spec, "vp9+aac");
+        assert!(selection.summary.contains("2160p"));
+        let full_build =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, true).unwrap();
+        assert_eq!(full_build.format_spec, "av1+aac");
+        let hd = select_formats(&formats, DownloadMode::Video, VideoQuality::P1080, false).unwrap();
+        assert_eq!(hd.format_spec, "h264+aac");
+        let audio =
+            select_formats(&formats, DownloadMode::AudioOnly, VideoQuality::Best, false).unwrap();
+        assert_eq!(audio.format_spec, "aac");
+    }
+
+    #[test]
+    fn reports_unsupported_av1_before_downloading_instead_of_lowering_resolution() {
+        let formats = vec![
+            format("h264", "mp4", Some("avc1"), Some("none"), Some(1080)),
+            format("av1", "mp4", Some("av1"), Some("none"), Some(2160)),
+        ];
+        let error =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, false).unwrap_err();
+        assert!(error.to_string().contains("no software AV1 decoder"));
     }
 
     #[test]
@@ -2105,7 +2223,8 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             format("aac", "m4a", Some("none"), Some("mp4a.40.2"), None),
         ];
 
-        let selection = select_formats(&formats, DownloadMode::Video, VideoQuality::Best).unwrap();
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, true).unwrap();
 
         assert_eq!(selection.format_spec, "av1-2160+aac");
         assert!(
@@ -2149,10 +2268,11 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             format("aac", "m4a", Some("none"), Some("mp4a.40.2"), None),
         ];
 
-        let full_hd = select_formats(&formats, DownloadMode::Video, VideoQuality::P1080).unwrap();
+        let full_hd =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::P1080, true).unwrap();
         let fourteen_forty =
-            select_formats(&formats, DownloadMode::Video, VideoQuality::P1440).unwrap();
-        let best = select_formats(&formats, DownloadMode::Video, VideoQuality::Best).unwrap();
+            select_formats(&formats, DownloadMode::Video, VideoQuality::P1440, true).unwrap();
+        let best = select_formats(&formats, DownloadMode::Video, VideoQuality::Best, true).unwrap();
 
         assert_eq!(full_hd.format_spec, "h264-1080+aac");
         assert!(full_hd.summary.contains("1080p H.264/AAC"));
@@ -2182,7 +2302,8 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             format("aac", "m4a", Some("none"), Some("mp4a.40.2"), None),
         ];
 
-        let selection = select_formats(&formats, DownloadMode::Video, VideoQuality::P1080).unwrap();
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::P1080, true).unwrap();
 
         assert_eq!(selection.format_spec, "h264-720+aac");
         assert!(selection.summary.contains("720p H.264/AAC"));
@@ -2203,7 +2324,8 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             format("aac", "m4a", Some("none"), Some("mp4a.40.2"), None),
         ];
 
-        let selection = select_formats(&formats, DownloadMode::Video, VideoQuality::P1080).unwrap();
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::P1080, true).unwrap();
 
         assert_eq!(selection.format_spec, "portrait-1080+aac");
         assert!(selection.summary.contains("1080p H.264/AAC"));
@@ -2231,7 +2353,8 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             format("aac", "m4a", Some("none"), Some("mp4a.40.2"), None),
         ];
 
-        let selection = select_formats(&formats, DownloadMode::Video, VideoQuality::Best).unwrap();
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, true).unwrap();
 
         assert_eq!(selection.format_spec, "h264-1080+aac");
         assert!(selection.summary.contains("1080p H.264/AAC"));
@@ -2247,7 +2370,8 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             Some(1080),
         )];
 
-        let selection = select_formats(&formats, DownloadMode::Video, VideoQuality::Best).unwrap();
+        let selection =
+            select_formats(&formats, DownloadMode::Video, VideoQuality::Best, true).unwrap();
 
         assert_eq!(selection.format_spec, "combined");
         assert!(selection.summary.contains("no conversion expected"));
@@ -2261,7 +2385,7 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
         ];
 
         let selection =
-            select_formats(&formats, DownloadMode::AudioOnly, VideoQuality::Best).unwrap();
+            select_formats(&formats, DownloadMode::AudioOnly, VideoQuality::Best, true).unwrap();
 
         assert_eq!(selection.format_spec, "aac");
         assert!(selection.summary.contains("best AAC"));
@@ -2301,16 +2425,18 @@ printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
             (VideoQuality::Best, "2160"),
         ] {
             assert_eq!(
-                select_video_formats(&formats, quality).unwrap().format_spec,
+                select_video_formats(&formats, quality, true)
+                    .unwrap()
+                    .format_spec,
                 expected
             );
             assert_eq!(
-                select_video_formats(&formats[..1], quality)
+                select_video_formats(&formats[..1], quality, true)
                     .unwrap()
                     .format_spec,
                 "unknown"
             );
-            assert!(select_video_formats(&[], quality).is_err());
+            assert!(select_video_formats(&[], quality, true).is_err());
         }
     }
 

@@ -31,6 +31,8 @@ These rules inspect the final yt-dlp error diagnostic, since its general failure
 The first retry shows “Retrying now (retry 1 of 3)…”. During subsequent waits, the existing progress bar becomes indeterminate and the status shows, for example, “YouTube temporarily blocked the request. Retrying in 10s (retry 2 of 3)…”, counting down each second. Cancel remains available. Only the final failure shows an error and diagnostic details: “The download failed after 3 automatic retries. Try again later.”
 
 ## Video Conversion
+Before selecting AV1 video, the app checks that FFmpeg includes a software AV1 decoder (libdav1d or libaom-av1). Builds without one use another codec at the selected resolution, such as VP9, and retain GPU H.264 encoding. If that resolution is available only as AV1, the app reports the limitation before downloading rather than silently reducing resolution.
+
 For video conversion, FFmpeg reads the source dimensions and average frame rate and applies the [YouTube SDR encoding guidance](https://support.google.com/youtube/answer/1722171). GPU encoders use the target and maximum; the CRF-based CPU fallback uses the same maximum. High frame rate means 48 fps or greater. Values are target/maximum Mbps:
 
 | Resolution | Standard frame rate | High frame rate |
