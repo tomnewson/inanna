@@ -464,6 +464,10 @@ public partial class MainWindowViewModel : ObservableObject
                 {
                     Progress = fraction.GetDouble() * 100;
                 }
+                else
+                {
+                    Progress = 0;
+                }
                 break;
             case "operationCompleted" when operationKind == "toolInstall":
                 FinishOperation();

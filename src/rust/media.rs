@@ -4,6 +4,7 @@ use crate::model::{
 use serde::Deserialize;
 use std::{
     collections::VecDeque,
+    future::Future,
     io,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
@@ -297,24 +298,31 @@ async fn run_pipeline(
     cancel: &CancellationToken,
     progress: &MediaProgress,
 ) -> Result<PathBuf, MediaError> {
-    (progress)(ProgressUpdate::message(
-        JobPhase::Inspecting,
-        "Checking available formats…",
-    ));
-    let media_info = inspect_formats(tools, request, cancel).await?;
-    let selection = select_formats(&media_info.formats, request.mode, request.video_quality)?;
-    (progress)(ProgressUpdate::message(
-        JobPhase::Preparing,
-        selection.summary.clone(),
-    ));
-    let downloaded = run_yt_dlp(
-        tools,
-        request,
-        staging,
-        &selection.format_spec,
-        selection.merge_container,
-        cancel,
+    let media_info = with_preparation_activity(
+        ProgressUpdate::message(JobPhase::Inspecting, "Checking available formats…"),
         progress,
+        |updates| async move { inspect_formats(tools, request, cancel, &updates).await },
+    )
+    .await?;
+    let selection = select_formats(&media_info.formats, request.mode, request.video_quality)?;
+    let downloaded = with_preparation_activity(
+        ProgressUpdate::message(
+            JobPhase::Preparing,
+            format!("Preparing download…\n{}", selection.summary),
+        ),
+        progress,
+        |updates| async move {
+            run_yt_dlp(
+                tools,
+                request,
+                staging,
+                &selection.format_spec,
+                selection.merge_container,
+                cancel,
+                &updates,
+            )
+            .await
+        },
     )
     .await?;
     if cancel.is_cancelled() {
@@ -360,10 +368,77 @@ async fn run_pipeline(
     Ok(output)
 }
 
+// Keep unmeasurable preparation visibly active until the subprocess reports progress.
+// The guard serializes timer and subprocess updates so an old preparation message
+// can never overwrite the first download update.
+async fn with_preparation_activity<T, F, Fut>(
+    initial: ProgressUpdate,
+    progress: &MediaProgress,
+    operation: F,
+) -> T
+where
+    F: FnOnce(MediaProgress) -> Fut,
+    Fut: Future<Output = T>,
+{
+    progress(initial.clone());
+    let activity = Arc::new(Mutex::new(Some((
+        initial.clone(),
+        tokio::time::Instant::now(),
+    ))));
+    let activity_sink = Arc::clone(&activity);
+    let progress_sink = Arc::clone(progress);
+    let updates: MediaProgress = Arc::new(move |update| {
+        let mut activity = activity_sink.lock().expect("activity mutex poisoned");
+        // Extraction can report several unmeasurable stages before byte progress.
+        if matches!(update.phase, JobPhase::Inspecting | JobPhase::Preparing)
+            && update.fraction.is_none()
+        {
+            if activity.as_ref().is_some_and(|(current, _)| {
+                current.phase == update.phase && current.message == update.message
+            }) {
+                return;
+            }
+            *activity = Some((update.clone(), tokio::time::Instant::now()));
+        } else {
+            *activity = None;
+        }
+        progress_sink(update);
+    });
+    let started = tokio::time::Instant::now();
+    let mut timer = tokio::time::interval_at(
+        started + std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(1),
+    );
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let operation = operation(updates);
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut operation => return result,
+            _ = timer.tick() => {
+                let activity = activity.lock().expect("activity mutex poisoned");
+                if let Some((current, step_started)) = activity.as_ref() {
+                    let elapsed = step_started.elapsed().as_secs();
+                    if elapsed >= 10 {
+                        let mut update = current.clone();
+                        update.message = match current.message.split_once('\n') {
+                            Some((status, details)) => format!("{status} · {elapsed}s elapsed\n{details}"),
+                            None => format!("{} · {elapsed}s elapsed", current.message),
+                        };
+                        progress(update);
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn inspect_formats(
     tools: &ActiveToolset,
     request: &DownloadRequest,
     cancel: &CancellationToken,
+    progress: &MediaProgress,
 ) -> Result<MediaInfo, MediaError> {
     if cancel.is_cancelled() {
         return Err(MediaError::Cancelled);
@@ -374,7 +449,8 @@ async fn inspect_formats(
         .arg("--no-config")
         .arg("--no-update")
         .arg("--no-playlist")
-        .arg("--quiet")
+        .arg("--no-quiet")
+        .arg("--no-colors")
         .arg("--dump-single-json")
         .arg("--ffmpeg-location")
         .arg(&tools.directory)
@@ -386,7 +462,15 @@ async fn inspect_formats(
 
     let json = Arc::new(Mutex::new(String::new()));
     let json_sink = Arc::clone(&json);
+    let progress_sink = Arc::clone(progress);
     let stdout_handler = Arc::new(move |line: String| {
+        // --no-quiet mixes extractor messages with the single-line JSON on stdout.
+        if !line.trim_start().starts_with('{') {
+            if let Some(update) = parse_format_inspection_activity(&line) {
+                progress_sink(update);
+            }
+            return;
+        }
         let mut output = json_sink.lock().expect("format JSON mutex poisoned");
         output.push_str(&line);
         output.push('\n');
@@ -394,7 +478,11 @@ async fn inspect_formats(
     let diagnostics = Arc::new(Mutex::new(VecDeque::<String>::with_capacity(30)));
     let diagnostic_sink = Arc::clone(&diagnostics);
     let redacted_url = request.url.clone();
+    let progress_sink = Arc::clone(progress);
     let stderr_handler = Arc::new(move |line: String| {
+        if let Some(update) = parse_format_inspection_activity(&line) {
+            progress_sink(update);
+        }
         let safe = line.replace(&redacted_url, "[URL]");
         let mut lines = diagnostic_sink.lock().expect("diagnostics mutex poisoned");
         if lines.len() == 30 {
@@ -419,8 +507,47 @@ async fn inspect_formats(
         }));
     }
 
+    progress(ProgressUpdate::message(
+        JobPhase::Inspecting,
+        "Choosing video and audio formats…",
+    ));
     let output = json.lock().expect("format JSON mutex poisoned");
     Ok(serde_json::from_str(output.trim())?)
+}
+
+// Recognize known extractor activity only; never show URLs, IDs or raw diagnostics.
+// Unknown/new messages leave the current stage and its elapsed timer intact.
+fn parse_format_inspection_activity(line: &str) -> Option<ProgressUpdate> {
+    let line = line.trim();
+    if !line.starts_with('[') || line.starts_with("[debug]") {
+        return None;
+    }
+    let message = if line.contains(": Extracting URL:") || line.contains("] Extracting URL:") {
+        "Connecting to the video site…"
+    } else if line.contains(": Downloading webpage") {
+        "Loading video page…"
+    } else if line.contains("Solving JS challenges") {
+        "Resolving playback checks…"
+    } else if line.contains("Downloading challenge solver") {
+        "Preparing playback checks…"
+    } else if line.contains("player API JSON") {
+        "Fetching player information…"
+    } else if line.contains(": Downloading player ") {
+        "Loading video player…"
+    } else if line.contains("Downloading m3u8")
+        || line.contains("Downloading MPD")
+        || line.contains("Downloading f4m")
+        || line.contains("Downloading ISM")
+    {
+        "Reading available streams…"
+    } else if line.contains(": Downloading JSON metadata")
+        || line.contains(": Downloading API JSON")
+    {
+        "Fetching video information…"
+    } else {
+        return None;
+    };
+    Some(ProgressUpdate::message(JobPhase::Inspecting, message))
 }
 
 fn select_formats(
@@ -1369,6 +1496,220 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn preparation_activity_stops_when_download_progress_arrives() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        let progress: MediaProgress = Arc::new(move |update| sink.lock().unwrap().push(update));
+        let result = with_preparation_activity(
+            ProgressUpdate::message(
+                JobPhase::Preparing,
+                "Preparing download…\nNo H.264 stream is available; video requires conversion.",
+            ),
+            &progress,
+            |updates| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(10500)).await;
+                updates(parse_ytdlp_progress("25|250|1000|50").unwrap());
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                Err::<(), _>(MediaError::Cancelled)
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(MediaError::Cancelled)));
+        let updates = received.lock().unwrap();
+        assert_eq!(updates.len(), 3);
+        assert_eq!(
+            updates[0].message,
+            "Preparing download…\nNo H.264 stream is available; video requires conversion."
+        );
+        assert_eq!(
+            updates[1].message,
+            "Preparing download… · 10s elapsed\nNo H.264 stream is available; video requires conversion."
+        );
+        assert_eq!(updates[1].fraction, None);
+        assert_eq!(updates[2].phase, JobPhase::Downloading);
+        assert_eq!(updates[2].fraction, Some(0.25));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inspection_activity_continues_until_inspection_finishes() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        let progress: MediaProgress = Arc::new(move |update| sink.lock().unwrap().push(update));
+        let result = with_preparation_activity(
+            ProgressUpdate::message(JobPhase::Inspecting, "Checking available formats…"),
+            &progress,
+            |_| async {
+                tokio::time::sleep(std::time::Duration::from_millis(11500)).await;
+                42
+            },
+        )
+        .await;
+        assert_eq!(result, 42);
+        let updates = received.lock().unwrap();
+        assert_eq!(updates.len(), 3);
+        assert_eq!(
+            updates[2].message,
+            "Checking available formats… · 11s elapsed"
+        );
+        assert!(updates.iter().all(|update| update.fraction.is_none()));
+    }
+
+    #[test]
+    fn recognizes_inspection_stages_without_exposing_raw_output() {
+        for (line, expected) in [
+            (
+                "[youtube] Extracting URL: https://example.com/private",
+                "Connecting to the video site…",
+            ),
+            ("[youtube] id: Downloading webpage", "Loading video page…"),
+            (
+                "[youtube] id: Downloading web safari player API JSON",
+                "Fetching player information…",
+            ),
+            (
+                "[youtube] id: Downloading player abc-main",
+                "Loading video player…",
+            ),
+            (
+                "[youtube] [jsc:deno] Downloading challenge solver lib script from https://example.com",
+                "Preparing playback checks…",
+            ),
+            (
+                "[youtube] [jsc:deno] Solving JS challenges using deno",
+                "Resolving playback checks…",
+            ),
+            (
+                "[youtube] id: Downloading m3u8 information",
+                "Reading available streams…",
+            ),
+            (
+                "[generic] id: Downloading MPD manifest",
+                "Reading available streams…",
+            ),
+            (
+                "[vimeo] id: Downloading JSON metadata",
+                "Fetching video information…",
+            ),
+        ] {
+            let update = parse_format_inspection_activity(line).unwrap();
+            assert_eq!(update.message, expected);
+            assert_eq!(update.phase, JobPhase::Inspecting);
+            assert_eq!(update.fraction, None);
+        }
+        for line in [
+            "WARNING: Downloading webpage failed",
+            "ERROR: player API JSON unavailable",
+            "[debug] Downloading player abc",
+            "[generic] Unrecognized activity",
+            r#"{"title":"Downloading player API JSON"}"#,
+        ] {
+            assert!(parse_format_inspection_activity(line).is_none());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inspection_timer_resets_per_step_and_waits_ten_seconds() {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        let progress: MediaProgress = Arc::new(move |update| sink.lock().unwrap().push(update));
+        let observed = Arc::clone(&received);
+        with_preparation_activity(
+            ProgressUpdate::message(JobPhase::Inspecting, "Checking available formats…"),
+            &progress,
+            |updates| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(9500)).await;
+                assert_eq!(observed.lock().unwrap().len(), 1);
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let stage =
+                    parse_format_inspection_activity("[youtube] id: Downloading webpage").unwrap();
+                updates(stage.clone());
+                let count = observed.lock().unwrap().len();
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                updates(stage); // Repeated activity in the same step must not reset its timer.
+                tokio::time::sleep(std::time::Duration::from_millis(6900)).await;
+                assert_eq!(observed.lock().unwrap().len(), count);
+                assert_eq!(
+                    observed.lock().unwrap().last().unwrap().message,
+                    "Loading video page…"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            },
+        )
+        .await;
+        let updates = received.lock().unwrap();
+        let step_index = updates
+            .iter()
+            .position(|update| update.message == "Loading video page…")
+            .unwrap();
+        assert_eq!(
+            updates[step_index + 1].message,
+            "Loading video page… · 10s elapsed"
+        );
+        assert_eq!(
+            updates[step_index + 2].message,
+            "Loading video page… · 11s elapsed"
+        );
+        assert_eq!(updates.len(), step_index + 3);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn inspection_separates_activity_from_format_json() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("yt-dlp");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+printf '%s\n' '[youtube] id: Downloading webpage' '[generic] Unknown activity' '{"formats":[]}'
+printf '%s\n' '[youtube] id: Downloading m3u8 information' >&2
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tools = ActiveToolset {
+            id: "test".into(),
+            yt_dlp_version: "test".into(),
+            ffmpeg_version: "test".into(),
+            deno_version: "test".into(),
+            directory: directory.path().into(),
+            platform: "macos-arm64".into(),
+            yt_dlp_path: "yt-dlp".into(),
+            ffmpeg_path: "ffmpeg".into(),
+            ffprobe_path: "ffprobe".into(),
+            deno_path: "deno".into(),
+        };
+        let request = DownloadRequest {
+            url: "https://example.com/video".into(),
+            mode: DownloadMode::Video,
+            video_quality: VideoQuality::Best,
+            output_directory: directory.path().into(),
+        };
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        let progress: MediaProgress = Arc::new(move |update| sink.lock().unwrap().push(update));
+        let info = inspect_formats(&tools, &request, &CancellationToken::new(), &progress)
+            .await
+            .unwrap();
+        assert!(info.formats.is_empty());
+        let updates = received.lock().unwrap();
+        assert!(
+            updates
+                .iter()
+                .any(|update| update.message == "Loading video page…")
+        );
+        assert!(
+            updates
+                .iter()
+                .any(|update| update.message == "Reading available streams…")
+        );
+        assert_eq!(
+            updates.last().unwrap().message,
+            "Choosing video and audio formats…"
+        );
+    }
 
     const YOUTUBE_URL: &str = "https://www.youtube.com/watch?v=test";
 

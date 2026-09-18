@@ -110,6 +110,36 @@ public sealed class MainWindowViewModelTests
     }
 
     [Theory]
+    [InlineData("inspecting", "null")]
+    [InlineData("preparing", "null")]
+    [InlineData("converting", "null")]
+    [InlineData("downloading", "null")]
+    public async Task UnmeasuredProgressClearsPreviousPercentage(string phase, string fraction)
+    {
+        var backend = new FakeBackendClient();
+        backend.Enqueue("startDownload", Json("""{"operationId":"progress-1"}"""));
+        var viewModel = CreateViewModel(backend);
+        viewModel.Url = "https://example.com/video";
+        viewModel.OutputFolder = "C:/Videos";
+        viewModel.ToolsReady = true;
+        viewModel.Busy = false;
+        await viewModel.StartDownloadCommand.ExecuteAsync(null);
+        viewModel.Progress = 100;
+
+        backend.Raise(new BackendEvent("progress-1", "operationProgress", Json(
+            $$"""{"operationKind":"download","phase":"{{phase}}","fraction":{{fraction}},"message":"Working…"}""")));
+
+        Assert.Equal(0, viewModel.Progress);
+        Assert.True(viewModel.IsProgressIndeterminate);
+        Assert.True(viewModel.ShowCancelButton);
+
+        backend.Raise(new BackendEvent("progress-1", "operationProgress", Json(
+            """{"operationKind":"download","fraction":0.3,"message":"Working…"}""")));
+        Assert.Equal(30, viewModel.Progress);
+        Assert.False(viewModel.IsProgressIndeterminate);
+    }
+
+    [Theory]
     [InlineData(0, "audioOnly", "best")]
     [InlineData(1, "video", "p1080")]
     [InlineData(2, "video", "p1440")]
